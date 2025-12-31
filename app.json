@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "wyntercode",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/images/splash-icon.png",
       "resizeMode": "contain",
@@ -20,7 +20,10 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Camera is used to scan QR codes for pairing with the desktop app",
         "NSLocalNetworkUsageDescription": "Local network access is required to connect to Wynter Code on your desktop",
-        "NSBonjourServices": ["_wynter-code._tcp"]
+        "NSBonjourServices": ["_wynter-code._tcp"],
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
       }
     },
     "android": {

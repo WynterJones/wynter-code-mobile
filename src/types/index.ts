@@ -93,10 +93,27 @@ export interface AutoBuildState {
   status: AutoBuildStatus;
   workers: Worker[];
   queue: QueueItem[];
+  humanReview: QueueItem[];
+  completed: QueueItem[];
   logs: LogEntry[];
   progress: number;
   currentIssueId?: string;
   currentPhase?: AutoBuildPhase;
+}
+
+// AI Provider/Model Types
+export type AIProvider = 'claude' | 'openai' | 'gemini';
+
+export type ClaudeModel = 'claude-opus-4-20250514' | 'claude-sonnet-4-20250514' | 'claude-3-5-haiku-20241022';
+export type OpenAIModel = 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini';
+export type GeminiModel = 'gemini-3-pro-preview' | 'gemini-3-flash-preview' | 'gemini-2.5-flash' | 'gemini-2.5-pro';
+export type AIModel = ClaudeModel | OpenAIModel | GeminiModel;
+
+export interface ModelInfo {
+  id: AIModel;
+  name: string;
+  description: string;
+  provider: AIProvider;
 }
 
 // Chat
@@ -104,6 +121,8 @@ export interface ChatSession {
   id: string;
   name: string;
   projectId: string;
+  provider?: AIProvider;
+  model?: AIModel;
   createdAt: string;
   updatedAt: string;
   messageCount: number;
@@ -157,4 +176,69 @@ export interface PairResponse {
     id: string;
     name: string;
   };
+}
+
+// Overwatch Types
+export type ServiceProvider = 'railway' | 'plausible' | 'netlify' | 'sentry' | 'link';
+export type ServiceStatus = 'healthy' | 'degraded' | 'down' | 'unknown' | 'loading';
+
+export interface OverwatchService {
+  id: string;
+  workspaceId: string;
+  provider: ServiceProvider;
+  name: string;
+  externalUrl?: string;
+  status?: ServiceStatus;
+  linkIcon?: string;
+  linkColor?: string;
+  enabled: boolean;
+  sortOrder: number;
+  metrics?: Record<string, unknown>;
+  lastUpdated?: number;
+  error?: string;
+}
+
+// Subscription Types
+export type BillingCycle = 'monthly' | 'yearly' | 'quarterly' | 'weekly' | 'one-time';
+
+export interface Subscription {
+  id: string;
+  workspaceId: string;
+  name: string;
+  url?: string;
+  faviconUrl?: string;
+  monthlyCost: number;
+  billingCycle: BillingCycle;
+  currency: string;
+  categoryId?: string;
+  notes?: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface SubscriptionCategory {
+  id: string;
+  workspaceId: string;
+  name: string;
+  color?: string;
+  sortOrder: number;
+}
+
+// Bookmark Types
+export interface Bookmark {
+  id: string;
+  url: string;
+  title: string;
+  description?: string;
+  faviconUrl?: string;
+  collectionId?: string;
+  order: number;
+}
+
+export interface BookmarkCollection {
+  id: string;
+  name: string;
+  icon?: string;
+  color?: string;
+  order: number;
 }

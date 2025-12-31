@@ -2,7 +2,7 @@
  * Auto-Build Store - manages auto-build state with real-time updates
  */
 import { create } from 'zustand';
-import { wsManager, AutoBuildUpdate } from '../api/websocket';
+import { wsManager, AutoBuildUpdate, AutoBuildAddToQueueUpdate } from '../api/websocket';
 import type { AutoBuildState, AutoBuildStatus, AutoBuildPhase, Worker, QueueItem, LogEntry } from '../types';
 
 interface AutoBuildStore {
@@ -17,10 +17,13 @@ interface AutoBuildStore {
   setQueue: (queue: QueueItem[]) => void;
   setLogs: (logs: LogEntry[]) => void;
   addLog: (log: LogEntry) => void;
+  addToQueue: (item: QueueItem) => void;
+  removeFromQueue: (issueId: string) => void;
   reset: () => void;
 
   // Real-time
   handleUpdate: (update: AutoBuildUpdate) => void;
+  handleAddToQueue: (update: AutoBuildAddToQueueUpdate, issueTitle?: string) => void;
   subscribe: (projectId: string) => void;
   unsubscribe: () => void;
 }
@@ -29,6 +32,8 @@ const initialState: AutoBuildState = {
   status: 'stopped',
   workers: [],
   queue: [],
+  humanReview: [],
+  completed: [],
   logs: [],
   progress: 0,
   currentIssueId: undefined,
@@ -76,6 +81,28 @@ export const useAutoBuildStore = create<AutoBuildStore>((set, get) => {
         },
       })),
 
+    addToQueue: (item) =>
+      set((state) => {
+        // Don't add if already in queue
+        if (state.state.queue.some((q) => q.id === item.id)) {
+          return state;
+        }
+        return {
+          state: {
+            ...state.state,
+            queue: [...state.state.queue, item],
+          },
+        };
+      }),
+
+    removeFromQueue: (issueId) =>
+      set((state) => ({
+        state: {
+          ...state.state,
+          queue: state.state.queue.filter((q) => q.id !== issueId),
+        },
+      })),
+
     reset: () => set({ state: initialState }),
 
     handleUpdate: (update) => {
@@ -102,6 +129,22 @@ export const useAutoBuildStore = create<AutoBuildStore>((set, get) => {
         createdAt: q.created_at,
       }));
 
+      // Map human review items
+      const humanReview: QueueItem[] = (status.human_review || []).map((q) => ({
+        id: q.id,
+        description: q.title,
+        status: 'pending' as const,
+        createdAt: q.created_at,
+      }));
+
+      // Map completed items
+      const completed: QueueItem[] = (status.completed || []).map((q) => ({
+        id: q.id,
+        description: q.title,
+        status: 'completed' as const,
+        createdAt: q.created_at,
+      }));
+
       // Map logs
       const logs: LogEntry[] = (status.logs || []).map((l) => ({
         id: l.id,
@@ -125,6 +168,8 @@ export const useAutoBuildStore = create<AutoBuildStore>((set, get) => {
           status: mappedStatus,
           workers,
           queue,
+          humanReview,
+          completed,
           logs,
           progress: status.progress || 0,
           currentIssueId: status.current_issue_id,
@@ -133,8 +178,19 @@ export const useAutoBuildStore = create<AutoBuildStore>((set, get) => {
       });
     },
 
+    handleAddToQueue: (update, issueTitle) => {
+      const { addToQueue } = get();
+      const newItem: QueueItem = {
+        id: update.issue_id,
+        description: issueTitle || `Issue ${update.issue_id}`,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      };
+      addToQueue(newItem);
+    },
+
     subscribe: (projectId) => {
-      const { isSubscribed, handleUpdate } = get();
+      const { isSubscribed, handleUpdate, handleAddToQueue } = get();
 
       // Already subscribed, just request updates for new project
       if (isSubscribed) {
@@ -149,6 +205,8 @@ export const useAutoBuildStore = create<AutoBuildStore>((set, get) => {
       unsubscribeWs = wsManager.addHandler((update) => {
         if (update.type === 'AutoBuildUpdate') {
           handleUpdate(update);
+        } else if (update.type === 'AutoBuildAddToQueue') {
+          handleAddToQueue(update);
         }
       });
 

@@ -73,7 +73,13 @@ export interface ToolCallUpdate {
   };
 }
 
-export type StateUpdate = BeadsUpdate | AutoBuildUpdate | ChatStreamUpdate | ToolCallUpdate;
+export interface AutoBuildAddToQueueUpdate {
+  type: 'AutoBuildAddToQueue';
+  project_id: string;
+  issue_id: string;
+}
+
+export type StateUpdate = BeadsUpdate | AutoBuildUpdate | ChatStreamUpdate | ToolCallUpdate | AutoBuildAddToQueueUpdate;
 
 type UpdateHandler = (update: StateUpdate) => void;
 

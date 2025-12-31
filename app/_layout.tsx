@@ -63,7 +63,53 @@ export default function RootLayout() {
       <ThemeProvider value={CatppuccinTheme}>
         <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Connect' }} />
+          <Stack.Screen
+            name="modal"
+            options={{
+              presentation: 'modal',
+              title: 'Connect'
+            }}
+          />
+          <Stack.Screen
+            name="menu"
+            options={{
+              presentation: 'transparentModal',
+              headerShown: false,
+              animation: 'fade',
+            }}
+          />
+          <Stack.Screen
+            name="farmwork"
+            options={{
+              title: 'Farmwork',
+              headerStyle: { backgroundColor: colors.bg.secondary },
+              headerTintColor: colors.text.primary,
+            }}
+          />
+          <Stack.Screen
+            name="overwatch"
+            options={{
+              title: 'Overwatch',
+              headerStyle: { backgroundColor: colors.bg.secondary },
+              headerTintColor: colors.text.primary,
+            }}
+          />
+          <Stack.Screen
+            name="subscriptions"
+            options={{
+              title: 'Subscriptions',
+              headerStyle: { backgroundColor: colors.bg.secondary },
+              headerTintColor: colors.text.primary,
+            }}
+          />
+          <Stack.Screen
+            name="bookmarks"
+            options={{
+              title: 'Bookmarks',
+              headerStyle: { backgroundColor: colors.bg.secondary },
+              headerTintColor: colors.text.primary,
+            }}
+          />
         </Stack>
       </ThemeProvider>
     </QueryClientProvider>

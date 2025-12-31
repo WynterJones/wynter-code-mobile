@@ -14,6 +14,8 @@ import {
   startAutoBuild,
   pauseAutoBuild,
   stopAutoBuild,
+  addToAutoBuildQueue,
+  removeFromAutoBuildQueue,
   fetchSessions,
   fetchMessages,
   sendMessage,
@@ -30,6 +32,7 @@ import type {
   UpdateIssueInput,
   ChatSession,
   ChatMessage,
+  QueueItem,
 } from '../types';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useProjectStore } from '../stores/projectStore';
@@ -74,16 +77,18 @@ export function useProjects(workspaceId: string) {
 /**
  * Fetch issues for the selected project
  */
-export function useIssues() {
+export function useIssues(options?: { pollingEnabled?: boolean; pollingInterval?: number }) {
   const isConnected = useIsConnected();
   const selectedProject = useProjectStore((s) => s.selectedProject);
   const projectPath = selectedProject?.path ?? '';
+  const { pollingEnabled = false, pollingInterval = 5000 } = options ?? {};
 
   return useQuery({
     queryKey: queryKeys.issues(projectPath),
     queryFn: () => fetchIssues(projectPath),
     enabled: isConnected && !!projectPath,
     staleTime: 30000, // 30 seconds
+    refetchInterval: pollingEnabled ? pollingInterval : false,
   });
 }
 
@@ -275,6 +280,60 @@ export function useStopAutoBuild() {
   return useMutation({
     mutationFn: () => stopAutoBuild(projectId),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.autoBuild(projectId) });
+    },
+  });
+}
+
+/**
+ * Add issue to auto-build queue
+ */
+export function useAddToAutoBuildQueue() {
+  const queryClient = useQueryClient();
+  const selectedProject = useProjectStore((s) => s.selectedProject);
+  const projectId = selectedProject?.id ?? '';
+  const projectPath = selectedProject?.path ?? '';
+  const { addToQueue } = useAutoBuildStore();
+
+  return useMutation({
+    mutationFn: (issueId: string) => addToAutoBuildQueue(projectId, issueId),
+    onMutate: async (issueId) => {
+      // Get the issue details from cache to populate the queue item
+      const issues = queryClient.getQueryData<Issue[]>(queryKeys.issues(projectPath));
+      const issue = issues?.find((i) => i.id === issueId);
+
+      // Optimistically add to queue
+      addToQueue({
+        id: issueId,
+        description: issue?.title || `Issue ${issueId}`,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      });
+    },
+    onSuccess: () => {
+      // WebSocket will handle real-time queue updates
+      queryClient.invalidateQueries({ queryKey: queryKeys.autoBuild(projectId) });
+    },
+  });
+}
+
+/**
+ * Remove issue from auto-build queue
+ */
+export function useRemoveFromAutoBuildQueue() {
+  const queryClient = useQueryClient();
+  const selectedProject = useProjectStore((s) => s.selectedProject);
+  const projectId = selectedProject?.id ?? '';
+  const { removeFromQueue } = useAutoBuildStore();
+
+  return useMutation({
+    mutationFn: (issueId: string) => removeFromAutoBuildQueue(projectId, issueId),
+    onMutate: async (issueId) => {
+      // Optimistically remove from queue
+      removeFromQueue(issueId);
+    },
+    onSuccess: () => {
+      // WebSocket will handle real-time queue updates
       queryClient.invalidateQueries({ queryKey: queryKeys.autoBuild(projectId) });
     },
   });

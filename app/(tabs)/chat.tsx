@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,50 +10,81 @@ import {
   Platform,
   RefreshControl,
   ActivityIndicator,
+  Image,
+  Modal,
+  Animated,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 import { colors, spacing, borderRadius } from '@/src/theme';
-import { useProjectStore, useConnectionStore, useChatStore } from '@/src/stores';
-import {
-  useSessions,
-  useMessages,
-  useSendMessage,
-  useApproveToolCall,
-  useRejectToolCall,
-} from '@/src/api/hooks';
-import type { ChatSession, ChatMessage, ToolCall } from '@/src/types';
+import { useConnectionStore, useMobileChatStore } from '@/src/stores';
+import { sendMobileChatMessage, MobileChatChunk } from '@/src/api/client';
+import type { AIProvider, AIModel, ModelInfo, ToolCall } from '@/src/types';
+import type { MobileChatSession, MobileChatMessage } from '@/src/stores/mobileChatStore';
+
+// Provider colors
+const PROVIDER_COLORS: Record<AIProvider, string> = {
+  claude: '#D97757',
+  openai: '#10A37F',
+  gemini: '#4285F4',
+};
+
+// Model configurations
+const MODELS: ModelInfo[] = [
+  // Claude
+  { id: 'claude-opus-4-20250514', name: 'Opus', description: 'Most capable', provider: 'claude' },
+  { id: 'claude-sonnet-4-20250514', name: 'Sonnet', description: 'Balanced', provider: 'claude' },
+  { id: 'claude-3-5-haiku-20241022', name: 'Haiku', description: 'Fastest', provider: 'claude' },
+  // OpenAI
+  { id: 'gpt-5.2-codex', name: 'Codex', description: 'Balanced', provider: 'openai' },
+  { id: 'gpt-5.1-codex-max', name: 'Max', description: 'Most capable', provider: 'openai' },
+  { id: 'gpt-5.1-codex-mini', name: 'Mini', description: 'Fastest', provider: 'openai' },
+  // Gemini
+  { id: 'gemini-3-pro-preview', name: 'Pro 3', description: 'Preview', provider: 'gemini' },
+  { id: 'gemini-3-flash-preview', name: 'Flash 3', description: 'Fast preview', provider: 'gemini' },
+  { id: 'gemini-2.5-flash', name: 'Flash 2.5', description: 'Fast', provider: 'gemini' },
+  { id: 'gemini-2.5-pro', name: 'Pro 2.5', description: 'Most capable', provider: 'gemini' },
+];
+
+const DEFAULT_PROVIDER: AIProvider = 'claude';
+const DEFAULT_MODEL: AIModel = 'claude-sonnet-4-20250514';
 
 export default function ChatScreen() {
   const router = useRouter();
   const connection = useConnectionStore((s) => s.connection);
-  const selectedProject = useProjectStore((s) => s.selectedProject);
-  const { selectedSessionId, selectSession } = useChatStore();
+  const {
+    sessions,
+    selectedSessionId,
+    isLoading,
+    error,
+    selectSession,
+    loadSessions,
+  } = useMobileChatStore();
 
-  // Fetch sessions from API
-  const { data: sessions = [], isLoading, refetch, isRefetching } = useSessions();
+  const [showNewChatModal, setShowNewChatModal] = useState(false);
 
-  // Find selected session
+  // Load sessions on mount
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
+
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) || null;
 
-  // Pull to refresh
   const onRefresh = useCallback(async () => {
-    await refetch();
-  }, [refetch]);
+    await loadSessions();
+  }, [loadSessions]);
 
-  // Not connected state
   if (!connection.device) {
     return (
       <View style={styles.container}>
         <View style={styles.emptyState}>
           <View style={styles.iconContainer}>
-            <FontAwesome name="plug" size={48} color={colors.text.muted} />
+            <Image source={require('@/assets/images/icon.png')} style={styles.logoImage} />
           </View>
           <Text style={styles.emptyTitle}>Not Connected</Text>
-          <Text style={styles.emptyText}>
-            Connect to your desktop to access chat sessions.
-          </Text>
+          <Text style={styles.emptyText}>Connect to your desktop to start chatting with AI.</Text>
           <TouchableOpacity style={styles.button} onPress={() => router.push('/modal')}>
             <Text style={styles.buttonText}>Connect to Desktop</Text>
           </TouchableOpacity>
@@ -62,154 +93,395 @@ export default function ChatScreen() {
     );
   }
 
-  // No project selected
-  if (!selectedProject) {
+  // Error state
+  if (error) {
     return (
       <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Mobile Chats</Text>
+        </View>
         <View style={styles.emptyState}>
           <View style={styles.iconContainer}>
-            <FontAwesome name="folder-o" size={48} color={colors.text.muted} />
+            <FontAwesome name="exclamation-triangle" size={48} color={colors.accent.red} />
           </View>
-          <Text style={styles.emptyTitle}>No Project Selected</Text>
-          <Text style={styles.emptyText}>
-            Select a project from the Projects tab to view its chat sessions.
-          </Text>
-          <TouchableOpacity style={styles.button} onPress={() => router.push('/')}>
-            <FontAwesome name="folder" size={16} color={colors.bg.primary} />
-            <Text style={styles.buttonText}>Go to Projects</Text>
+          <Text style={styles.emptyTitle}>Failed to Load</Text>
+          <Text style={styles.emptyText}>{error}</Text>
+          <TouchableOpacity style={styles.button} onPress={() => router.push('/modal')}>
+            <FontAwesome name="link" size={16} color={colors.bg.primary} />
+            <Text style={styles.buttonText}>Check Connection</Text>
           </TouchableOpacity>
         </View>
       </View>
     );
   }
 
-  // Show chat view if session selected
   if (selectedSession) {
     return (
-      <ChatView
+      <MobileChatView
         session={selectedSession}
         onBack={() => selectSession(null)}
-        projectName={selectedProject.name}
       />
     );
   }
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
-        <View style={styles.projectBadge}>
-          <FontAwesome name="folder-open" size={14} color={colors.accent.purple} />
-          <Text style={styles.projectName}>{selectedProject.name}</Text>
-        </View>
+        <Text style={styles.headerTitle}>Mobile Chats</Text>
+        <TouchableOpacity
+          style={styles.newChatButton}
+          onPress={() => setShowNewChatModal(true)}
+        >
+          <FontAwesome name="plus" size={14} color={colors.bg.primary} />
+          <Text style={styles.newChatButtonText}>New Chat</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Sessions List */}
       <ScrollView
         style={styles.sessionList}
         contentContainerStyle={styles.sessionListContent}
         refreshControl={
-          <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={onRefresh}
-            tintColor={colors.accent.purple}
-          />
+          <RefreshControl refreshing={isLoading} onRefresh={onRefresh} tintColor={colors.accent.purple} />
         }
       >
-        {isLoading ? (
+        {isLoading && sessions.length === 0 ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={colors.accent.purple} />
           </View>
         ) : sessions.length === 0 ? (
           <View style={styles.emptyList}>
             <FontAwesome name="comments-o" size={32} color={colors.text.muted} />
-            <Text style={styles.emptyListText}>No chat sessions yet</Text>
-            <Text style={styles.emptyListSubtext}>
-              Sessions started on desktop will appear here
-            </Text>
+            <Text style={styles.emptyListText}>No chats yet</Text>
+            <Text style={styles.emptyListSubtext}>Create a new chat to get started</Text>
+            <TouchableOpacity
+              style={styles.emptyNewChat}
+              onPress={() => setShowNewChatModal(true)}
+            >
+              <FontAwesome name="plus" size={14} color={colors.accent.purple} />
+              <Text style={styles.emptyNewChatText}>Start New Chat</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           sessions.map((session) => (
-            <TouchableOpacity
+            <SessionCard
               key={session.id}
-              style={styles.sessionCard}
+              session={session}
               onPress={() => selectSession(session.id)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.sessionIcon}>
-                <FontAwesome name="comments" size={18} color={colors.accent.cyan} />
-              </View>
-              <View style={styles.sessionContent}>
-                <Text style={styles.sessionName}>{session.name}</Text>
-                <Text style={styles.sessionMeta}>
-                  {session.messageCount} messages
-                </Text>
-              </View>
-              <View style={styles.sessionTime}>
-                <Text style={styles.sessionTimeText}>
-                  {formatRelativeTime(session.updatedAt)}
-                </Text>
-                <FontAwesome name="chevron-right" size={12} color={colors.text.muted} />
-              </View>
-            </TouchableOpacity>
+            />
           ))
         )}
       </ScrollView>
+
+      <NewChatModal
+        visible={showNewChatModal}
+        onClose={() => setShowNewChatModal(false)}
+      />
     </View>
   );
 }
 
-function ChatView({
-  session,
-  onBack,
-  projectName,
-}: {
-  session: ChatSession;
-  onBack: () => void;
-  projectName: string;
-}) {
-  const [inputText, setInputText] = useState('');
-  const scrollViewRef = useRef<ScrollView>(null);
+// Session card with provider icon
+function SessionCard({ session, onPress }: { session: MobileChatSession; onPress: () => void }) {
+  const provider = session.provider || 'claude';
+  const providerColor = PROVIDER_COLORS[provider];
+  const { deleteSession } = useMobileChatStore();
 
-  // Get messages from store (updated in real-time via WebSocket)
-  const messagesFromStore = useChatStore((s) => s.getSessionMessages(session.id));
-  const streamingState = useChatStore((s) => s.streamingState);
-
-  // Fetch messages from API (populates store on initial load)
-  const { data: messages = messagesFromStore, isLoading } = useMessages(session.id);
-
-  // Use store messages if available (more up-to-date with streaming)
-  const displayMessages = messagesFromStore.length > 0 ? messagesFromStore : messages;
-
-  // Mutations
-  const sendMutation = useSendMessage();
-  const approveMutation = useApproveToolCall();
-  const rejectMutation = useRejectToolCall();
-
-  const isSending = sendMutation.isPending;
-  const isStreaming = streamingState?.sessionId === session.id && streamingState?.isStreaming;
-
-  // Scroll to bottom on new messages
-  useEffect(() => {
-    scrollViewRef.current?.scrollToEnd({ animated: true });
-  }, [displayMessages, streamingState?.content]);
-
-  // Handle send message
-  const handleSend = async () => {
-    if (!inputText.trim() || isSending) return;
-
-    const content = inputText.trim();
-    setInputText('');
-    sendMutation.mutate({ sessionId: session.id, content });
+  const handleLongPress = () => {
+    Alert.alert(
+      'Delete Chat',
+      `Are you sure you want to delete "${session.name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => deleteSession(session.id),
+        },
+      ]
+    );
   };
 
-  // Handle tool approval
-  const handleToolAction = (toolId: string, action: 'approve' | 'reject') => {
-    if (action === 'approve') {
-      approveMutation.mutate({ sessionId: session.id, toolCallId: toolId });
-    } else {
-      rejectMutation.mutate({ sessionId: session.id, toolCallId: toolId });
+  return (
+    <TouchableOpacity
+      style={styles.sessionCard}
+      onPress={onPress}
+      onLongPress={handleLongPress}
+      activeOpacity={0.7}
+    >
+      <View style={[styles.sessionIcon, { backgroundColor: providerColor + '20' }]}>
+        <ProviderIcon provider={provider} size={20} />
+      </View>
+      <View style={styles.sessionContent}>
+        <Text style={styles.sessionName}>{session.name}</Text>
+        <View style={styles.sessionMetaRow}>
+          <Text style={styles.sessionMeta}>{session.messageCount} messages</Text>
+          {session.model && (
+            <View style={[styles.modelBadge, { backgroundColor: providerColor + '15' }]}>
+              <Text style={[styles.modelBadgeText, { color: providerColor }]}>
+                {getModelName(session.model)}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+      <View style={styles.sessionTime}>
+        <Text style={styles.sessionTimeText}>{formatRelativeTime(session.updatedAt)}</Text>
+        <FontAwesome name="chevron-right" size={12} color={colors.text.muted} />
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+// Provider icon component
+function ProviderIcon({ provider, size = 16 }: { provider: AIProvider; size?: number }) {
+  const color = PROVIDER_COLORS[provider];
+
+  // Use FontAwesome icons with provider colors
+  const icons: Record<AIProvider, string> = {
+    claude: 'comment',
+    openai: 'bolt',
+    gemini: 'diamond',
+  };
+
+  return (
+    <FontAwesome name={icons[provider] as any} size={size} color={color} />
+  );
+}
+
+function getModelName(modelId: AIModel): string {
+  const model = MODELS.find((m) => m.id === modelId);
+  return model?.name || modelId;
+}
+
+// New Chat Modal
+function NewChatModal({
+  visible,
+  onClose,
+}: {
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const [chatName, setChatName] = useState('');
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider>(DEFAULT_PROVIDER);
+  const [selectedModel, setSelectedModel] = useState<AIModel>(DEFAULT_MODEL);
+  const { createSession, selectSession } = useMobileChatStore();
+
+  const filteredModels = useMemo(
+    () => MODELS.filter((m) => m.provider === selectedProvider),
+    [selectedProvider]
+  );
+
+  // Update selected model when provider changes
+  useEffect(() => {
+    const defaultForProvider = filteredModels[0];
+    if (defaultForProvider && !filteredModels.find((m) => m.id === selectedModel)) {
+      setSelectedModel(defaultForProvider.id);
     }
+  }, [selectedProvider, filteredModels, selectedModel]);
+
+  const handleCreate = async () => {
+    const name = chatName.trim() || `Chat ${new Date().toLocaleDateString()}`;
+    const session = await createSession(name, selectedProvider, selectedModel);
+    selectSession(session.id);
+    setChatName('');
+    onClose();
+  };
+
+  const providers: { id: AIProvider; name: string }[] = [
+    { id: 'claude', name: 'Claude' },
+    { id: 'openai', name: 'OpenAI' },
+    { id: 'gemini', name: 'Gemini' },
+  ];
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>New Chat</Text>
+            <TouchableOpacity onPress={onClose} style={styles.modalClose}>
+              <FontAwesome name="times" size={18} color={colors.text.secondary} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Chat name input */}
+          <View style={styles.inputSection}>
+            <Text style={styles.inputLabel}>Chat Name (optional)</Text>
+            <TextInput
+              style={styles.nameInput}
+              value={chatName}
+              onChangeText={setChatName}
+              placeholder={`Chat ${new Date().toLocaleDateString()}`}
+              placeholderTextColor={colors.text.muted}
+            />
+          </View>
+
+          {/* Provider tabs */}
+          <View style={styles.inputSection}>
+            <Text style={styles.inputLabel}>AI Provider</Text>
+            <View style={styles.providerTabs}>
+              {providers.map((p) => (
+                <TouchableOpacity
+                  key={p.id}
+                  style={[
+                    styles.providerTab,
+                    selectedProvider === p.id && {
+                      backgroundColor: PROVIDER_COLORS[p.id] + '20',
+                      borderColor: PROVIDER_COLORS[p.id],
+                    },
+                  ]}
+                  onPress={() => setSelectedProvider(p.id)}
+                >
+                  <ProviderIcon provider={p.id} size={16} />
+                  <Text
+                    style={[
+                      styles.providerTabText,
+                      selectedProvider === p.id && { color: PROVIDER_COLORS[p.id] },
+                    ]}
+                  >
+                    {p.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* Model selection */}
+          <View style={styles.inputSection}>
+            <Text style={styles.inputLabel}>Model</Text>
+            <ScrollView style={styles.modelList} showsVerticalScrollIndicator={false}>
+              {filteredModels.map((model) => (
+                <TouchableOpacity
+                  key={model.id}
+                  style={[
+                    styles.modelOption,
+                    selectedModel === model.id && styles.modelOptionSelected,
+                  ]}
+                  onPress={() => setSelectedModel(model.id)}
+                >
+                  <View style={styles.modelOptionInfo}>
+                    <Text style={styles.modelOptionName}>{model.name}</Text>
+                    <Text style={styles.modelOptionDesc}>{model.description}</Text>
+                  </View>
+                  {selectedModel === model.id && (
+                    <FontAwesome name="check" size={16} color={colors.accent.green} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          {/* Create button */}
+          <TouchableOpacity style={styles.createButton} onPress={handleCreate}>
+            <FontAwesome name="plus" size={14} color={colors.bg.primary} />
+            <Text style={styles.createButtonText}>Create Chat</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// Mobile Chat view with streaming support
+function MobileChatView({
+  session,
+  onBack,
+}: {
+  session: MobileChatSession;
+  onBack: () => void;
+}) {
+  const [inputText, setInputText] = useState('');
+  const [showModelSelector, setShowModelSelector] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  const {
+    getSessionMessages,
+    addMessage,
+    updateSession,
+    streamingState,
+    startStreaming,
+    appendStreamContent,
+    endStreaming,
+  } = useMobileChatStore();
+
+  const messages = getSessionMessages(session.id);
+  const isStreaming = streamingState?.sessionId === session.id && streamingState?.isStreaming;
+
+  const provider = session.provider || 'claude';
+  const providerColor = PROVIDER_COLORS[provider];
+
+  useEffect(() => {
+    scrollViewRef.current?.scrollToEnd({ animated: true });
+  }, [messages, streamingState?.content]);
+
+  const handleSend = async () => {
+    if (!inputText.trim() || isSending) return;
+    const content = inputText.trim();
+    setInputText('');
+    setIsSending(true);
+
+    // Add user message
+    const userMessage: MobileChatMessage = {
+      id: `msg-${Date.now()}`,
+      sessionId: session.id,
+      role: 'user',
+      content,
+      timestamp: new Date().toISOString(),
+    };
+    addMessage(session.id, userMessage);
+
+    // Create assistant message placeholder
+    const assistantMessageId = `msg-${Date.now() + 1}`;
+    const assistantMessage: MobileChatMessage = {
+      id: assistantMessageId,
+      sessionId: session.id,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isStreaming: true,
+    };
+    addMessage(session.id, assistantMessage);
+    startStreaming(session.id, assistantMessageId);
+
+    try {
+      // Build history from previous messages (limit to last 10)
+      const history = messages.slice(-10).map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      // Send to API with streaming
+      await sendMobileChatMessage(
+        {
+          provider: session.provider,
+          model: session.model,
+          message: content,
+          history,
+        },
+        (chunk: MobileChatChunk) => {
+          if (chunk.type === 'content' && chunk.content) {
+            appendStreamContent(chunk.content);
+          } else if (chunk.type === 'done') {
+            endStreaming();
+          } else if (chunk.type === 'error') {
+            endStreaming();
+            Alert.alert('Error', chunk.error || 'Failed to get response');
+          }
+        }
+      );
+    } catch (error) {
+      console.error('[MobileChat] Send error:', error);
+      endStreaming();
+      Alert.alert('Error', 'Failed to send message. Check your connection.');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleModelChange = async (newProvider: AIProvider, newModel: AIModel) => {
+    await updateSession(session.id, { provider: newProvider, model: newModel });
+    setShowModelSelector(false);
   };
 
   return (
@@ -218,15 +490,27 @@ function ChatView({
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={100}
     >
-      {/* Header */}
+      {/* Header with provider/model selector */}
       <View style={styles.chatHeader}>
-        <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <FontAwesome name="chevron-left" size={16} color={colors.accent.blue} />
-          <Text style={styles.backText}>Sessions</Text>
-        </TouchableOpacity>
+        <View style={styles.chatHeaderTop}>
+          <TouchableOpacity onPress={onBack} style={styles.backButton}>
+            <FontAwesome name="chevron-left" size={16} color={colors.accent.blue} />
+            <Text style={styles.backText}>Chats</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.providerButton, { borderColor: providerColor + '50' }]}
+            onPress={() => setShowModelSelector(true)}
+          >
+            <ProviderIcon provider={provider} size={14} />
+            <Text style={[styles.providerButtonText, { color: providerColor }]}>
+              {getModelName(session.model)}
+            </Text>
+            <FontAwesome name="chevron-down" size={10} color={providerColor} />
+          </TouchableOpacity>
+        </View>
         <View style={styles.chatHeaderInfo}>
           <Text style={styles.chatTitle} numberOfLines={1}>{session.name}</Text>
-          <Text style={styles.chatSubtitle}>{projectName}</Text>
+          <Text style={styles.chatSubtitle}>Mobile Chat</Text>
         </View>
       </View>
 
@@ -236,33 +520,37 @@ function ChatView({
         style={styles.messageList}
         contentContainerStyle={styles.messageListContent}
       >
-        {isLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={colors.accent.purple} />
+        {messages.length === 0 ? (
+          <View style={styles.emptyChat}>
+            <ProviderIcon provider={provider} size={32} />
+            <Text style={styles.emptyChatText}>Start a conversation</Text>
+            <Text style={styles.emptyChatSubtext}>
+              Messages are stored locally on your device
+            </Text>
           </View>
         ) : (
-          displayMessages.map((message) => (
+          messages.map((message) => (
             <MessageBubble
               key={message.id}
               message={message}
-              onToolAction={handleToolAction}
+              providerColor={providerColor}
             />
           ))
         )}
-        {(isSending || isStreaming) && (
+
+        {/* Streaming indicator with content */}
+        {isStreaming && streamingState && !messages.find((m) => m.id === streamingState.messageId) && (
+          <StreamingMessage
+            content={streamingState.content}
+            currentTool={streamingState.currentTool}
+            providerColor={providerColor}
+          />
+        )}
+
+        {/* Typing indicator when sending */}
+        {isSending && !isStreaming && (
           <View style={styles.typingIndicator}>
-            {streamingState?.currentTool ? (
-              <View style={styles.streamingToolBadge}>
-                <FontAwesome name="cog" size={12} color={colors.accent.cyan} />
-                <Text style={styles.streamingToolText}>{streamingState.currentTool}</Text>
-              </View>
-            ) : (
-              <>
-                <View style={styles.typingDot} />
-                <View style={[styles.typingDot, styles.typingDotDelay1]} />
-                <View style={[styles.typingDot, styles.typingDotDelay2]} />
-              </>
-            )}
+            <PulsingDots />
           </View>
         )}
       </ScrollView>
@@ -290,59 +578,142 @@ function ChatView({
           />
         </TouchableOpacity>
       </View>
+
+      {/* Model Selector Modal */}
+      <ModelSelectorModal
+        visible={showModelSelector}
+        onClose={() => setShowModelSelector(false)}
+        currentProvider={provider}
+        currentModel={session.model}
+        onSelect={handleModelChange}
+      />
     </KeyboardAvoidingView>
   );
 }
 
-function MessageBubble({
-  message,
-  onToolAction,
+// Streaming message component
+function StreamingMessage({
+  content,
+  currentTool,
+  providerColor,
 }: {
-  message: ChatMessage;
-  onToolAction: (toolId: string, action: 'approve' | 'reject') => void;
+  content: string;
+  currentTool?: string;
+  providerColor: string;
 }) {
-  const isUser = message.role === 'user';
-
   return (
     <View style={styles.messageContainer}>
-      <View
-        style={[
-          styles.messageBubble,
-          isUser ? styles.userBubble : styles.assistantBubble,
-        ]}
-      >
-        <Text style={[styles.messageText, isUser && styles.userText]}>
-          {message.content}
-        </Text>
+      <View style={styles.assistantBubble}>
+        {content ? (
+          <Text style={styles.messageText}>{content}</Text>
+        ) : currentTool ? (
+          <View style={styles.inlineToolUse}>
+            <View style={[styles.inlineToolIcon, { backgroundColor: colors.accent.cyan + '20' }]}>
+              <FontAwesome name="cog" size={12} color={colors.accent.cyan} />
+            </View>
+            <Text style={styles.inlineToolText}>Using {currentTool}...</Text>
+          </View>
+        ) : (
+          <PulsingDots />
+        )}
+        {content && currentTool && (
+          <View style={[styles.inlineToolUse, { marginTop: spacing.sm }]}>
+            <View style={[styles.inlineToolIcon, { backgroundColor: colors.accent.cyan + '20' }]}>
+              <FontAwesome name="cog" size={12} color={colors.accent.cyan} />
+            </View>
+            <Text style={styles.inlineToolText}>Using {currentTool}...</Text>
+          </View>
+        )}
       </View>
-
-      {/* Tool Calls */}
-      {message.toolCalls && message.toolCalls.length > 0 && (
-        <View style={styles.toolCalls}>
-          {message.toolCalls.map((toolCall) => (
-            <ToolCallCard
-              key={toolCall.id}
-              toolCall={toolCall}
-              onAction={onToolAction}
-            />
-          ))}
-        </View>
-      )}
-
-      <Text style={[styles.messageTime, isUser && styles.messageTimeUser]}>
-        {formatTime(message.timestamp)}
-      </Text>
+      <View style={[styles.streamingIndicator, { backgroundColor: providerColor }]} />
     </View>
   );
 }
 
-function ToolCallCard({
-  toolCall,
-  onAction,
+// Pulsing dots animation
+function PulsingDots() {
+  const opacity1 = useRef(new Animated.Value(0.3)).current;
+  const opacity2 = useRef(new Animated.Value(0.3)).current;
+  const opacity3 = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const animate = (value: Animated.Value, delay: number) => {
+      return Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(value, { toValue: 1, duration: 300, useNativeDriver: true }),
+          Animated.timing(value, { toValue: 0.3, duration: 300, useNativeDriver: true }),
+        ])
+      );
+    };
+
+    const anim1 = animate(opacity1, 0);
+    const anim2 = animate(opacity2, 150);
+    const anim3 = animate(opacity3, 300);
+
+    anim1.start();
+    anim2.start();
+    anim3.start();
+
+    return () => {
+      anim1.stop();
+      anim2.stop();
+      anim3.stop();
+    };
+  }, []);
+
+  return (
+    <View style={styles.pulsingDotsContainer}>
+      <Animated.View style={[styles.pulsingDot, { opacity: opacity1 }]} />
+      <Animated.View style={[styles.pulsingDot, { opacity: opacity2 }]} />
+      <Animated.View style={[styles.pulsingDot, { opacity: opacity3 }]} />
+    </View>
+  );
+}
+
+// Message bubble
+function MessageBubble({
+  message,
+  providerColor,
 }: {
-  toolCall: ToolCall;
-  onAction: (toolId: string, action: 'approve' | 'reject') => void;
+  message: MobileChatMessage;
+  providerColor: string;
 }) {
+  const isUser = message.role === 'user';
+  const isStreaming = message.isStreaming;
+
+  return (
+    <View style={styles.messageContainer}>
+      <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
+        {message.content ? (
+          <Text style={[styles.messageText, isUser && styles.userText]}>{message.content}</Text>
+        ) : isStreaming ? (
+          <PulsingDots />
+        ) : null}
+
+        {/* Inline Tool Calls */}
+        {message.toolCalls && message.toolCalls.length > 0 && (
+          <View style={styles.inlineToolCalls}>
+            {message.toolCalls.map((toolCall) => (
+              <InlineToolCall key={toolCall.id} toolCall={toolCall} />
+            ))}
+          </View>
+        )}
+      </View>
+      {!isStreaming && (
+        <Text style={[styles.messageTime, isUser && styles.messageTimeUser]}>
+          {formatTime(message.timestamp)}
+        </Text>
+      )}
+      {isStreaming && (
+        <View style={[styles.streamingIndicator, { backgroundColor: providerColor }]} />
+      )}
+    </View>
+  );
+}
+
+// Inline tool call component (compact design, read-only for mobile)
+function InlineToolCall({ toolCall }: { toolCall: ToolCall }) {
   const toolIcons: Record<string, string> = {
     Read: 'file-text-o',
     Edit: 'pencil',
@@ -350,65 +721,126 @@ function ToolCallCard({
     Bash: 'terminal',
     Grep: 'search',
     Glob: 'folder-o',
+    Task: 'tasks',
+    WebFetch: 'globe',
+    WebSearch: 'search',
   };
 
-  const statusColors: Record<string, string> = {
-    pending: colors.accent.yellow,
-    approved: colors.accent.blue,
-    completed: colors.accent.green,
-    rejected: colors.accent.red,
+  const statusConfig: Record<string, { color: string; icon: string }> = {
+    pending: { color: colors.accent.yellow, icon: 'clock-o' },
+    approved: { color: colors.accent.blue, icon: 'check' },
+    completed: { color: colors.accent.green, icon: 'check-circle' },
+    rejected: { color: colors.accent.red, icon: 'times-circle' },
   };
 
-  const isPending = toolCall.status === 'pending';
+  const config = statusConfig[toolCall.status];
 
   return (
-    <View style={styles.toolCard}>
-      <View style={styles.toolHeader}>
-        <View style={[styles.toolIcon, { backgroundColor: statusColors[toolCall.status] + '20' }]}>
-          <FontAwesome
-            name={toolIcons[toolCall.name] as any || 'cog'}
-            size={14}
-            color={statusColors[toolCall.status]}
-          />
+    <View style={[styles.inlineToolCard, { borderLeftColor: config.color }]}>
+      <View style={styles.inlineToolHeader}>
+        <FontAwesome
+          name={toolIcons[toolCall.name] as any || 'cog'}
+          size={12}
+          color={config.color}
+        />
+        <Text style={styles.inlineToolName}>{toolCall.name}</Text>
+        <View style={[styles.inlineToolStatus, { backgroundColor: config.color + '20' }]}>
+          <FontAwesome name={config.icon as any} size={10} color={config.color} />
         </View>
-        <View style={styles.toolInfo}>
-          <Text style={styles.toolName}>{toolCall.name}</Text>
-          {toolCall.input && (
-            <Text style={styles.toolInput} numberOfLines={1}>
-              {typeof toolCall.input === 'object' && 'file' in toolCall.input
-                ? (toolCall.input as { file: string }).file
-                : JSON.stringify(toolCall.input)}
-            </Text>
-          )}
-        </View>
-        {!isPending && (
-          <View style={[styles.toolStatusBadge, { backgroundColor: statusColors[toolCall.status] + '20' }]}>
-            <Text style={[styles.toolStatusText, { color: statusColors[toolCall.status] }]}>
-              {toolCall.status}
-            </Text>
-          </View>
-        )}
       </View>
-
-      {isPending && (
-        <View style={styles.toolActions}>
-          <TouchableOpacity
-            style={[styles.toolActionButton, styles.toolRejectButton]}
-            onPress={() => onAction(toolCall.id, 'reject')}
-          >
-            <FontAwesome name="times" size={14} color={colors.accent.red} />
-            <Text style={[styles.toolActionText, { color: colors.accent.red }]}>Reject</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.toolActionButton, styles.toolApproveButton]}
-            onPress={() => onAction(toolCall.id, 'approve')}
-          >
-            <FontAwesome name="check" size={14} color={colors.accent.green} />
-            <Text style={[styles.toolActionText, { color: colors.accent.green }]}>Approve</Text>
-          </TouchableOpacity>
-        </View>
-      )}
     </View>
+  );
+}
+
+// Model selector modal
+function ModelSelectorModal({
+  visible,
+  onClose,
+  currentProvider,
+  currentModel,
+  onSelect,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  currentProvider: AIProvider;
+  currentModel?: AIModel;
+  onSelect: (provider: AIProvider, model: AIModel) => void;
+}) {
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider>(currentProvider);
+
+  const filteredModels = useMemo(
+    () => MODELS.filter((m) => m.provider === selectedProvider),
+    [selectedProvider]
+  );
+
+  const providers: { id: AIProvider; name: string }[] = [
+    { id: 'claude', name: 'Claude' },
+    { id: 'openai', name: 'OpenAI' },
+    { id: 'gemini', name: 'Gemini' },
+  ];
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Select Model</Text>
+            <TouchableOpacity onPress={onClose} style={styles.modalClose}>
+              <FontAwesome name="times" size={18} color={colors.text.secondary} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Provider tabs */}
+          <View style={styles.providerTabs}>
+            {providers.map((p) => (
+              <TouchableOpacity
+                key={p.id}
+                style={[
+                  styles.providerTab,
+                  selectedProvider === p.id && {
+                    backgroundColor: PROVIDER_COLORS[p.id] + '20',
+                    borderColor: PROVIDER_COLORS[p.id],
+                  },
+                ]}
+                onPress={() => setSelectedProvider(p.id)}
+              >
+                <ProviderIcon provider={p.id} size={16} />
+                <Text
+                  style={[
+                    styles.providerTabText,
+                    selectedProvider === p.id && { color: PROVIDER_COLORS[p.id] },
+                  ]}
+                >
+                  {p.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Model list */}
+          <ScrollView style={styles.modelList}>
+            {filteredModels.map((model) => (
+              <TouchableOpacity
+                key={model.id}
+                style={[
+                  styles.modelOption,
+                  currentModel === model.id && styles.modelOptionSelected,
+                ]}
+                onPress={() => onSelect(model.provider, model.id)}
+              >
+                <View style={styles.modelOptionInfo}>
+                  <Text style={styles.modelOptionName}>{model.name}</Text>
+                  <Text style={styles.modelOptionDesc}>{model.description}</Text>
+                </View>
+                {currentModel === model.id && (
+                  <FontAwesome name="check" size={16} color={colors.accent.green} />
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -438,21 +870,33 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.primary,
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: colors.bg.secondary,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  projectBadge: {
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.text.primary,
+  },
+  newChatButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    backgroundColor: colors.accent.purple,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    gap: spacing.xs,
   },
-  projectName: {
-    fontSize: 15,
+  newChatButtonText: {
+    fontSize: 13,
     fontWeight: '600',
-    color: colors.text.primary,
+    color: colors.bg.primary,
   },
   sessionList: {
     flex: 1,
@@ -475,6 +919,23 @@ const styles = StyleSheet.create({
     color: colors.text.muted,
     textAlign: 'center',
   },
+  emptyNewChat: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.accent.purple + '50',
+    borderStyle: 'dashed',
+  },
+  emptyNewChatText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.accent.purple,
+  },
   loadingContainer: {
     flex: 1,
     alignItems: 'center',
@@ -496,7 +957,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: borderRadius.md,
-    backgroundColor: colors.accent.cyan + '20',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -507,11 +967,25 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: colors.text.primary,
-    marginBottom: 2,
+    marginBottom: 4,
+  },
+  sessionMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
   },
   sessionMeta: {
     fontSize: 13,
     color: colors.text.muted,
+  },
+  modelBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: borderRadius.full,
+  },
+  modelBadgeText: {
+    fontSize: 11,
+    fontWeight: '500',
   },
   sessionTime: {
     alignItems: 'flex-end',
@@ -528,15 +1002,34 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  chatHeaderTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
   backButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    marginBottom: spacing.sm,
   },
   backText: {
     fontSize: 14,
     color: colors.accent.blue,
+    fontWeight: '500',
+  },
+  providerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    backgroundColor: colors.bg.tertiary,
+  },
+  providerButtonText: {
+    fontSize: 13,
     fontWeight: '500',
   },
   chatHeaderInfo: {
@@ -557,6 +1050,22 @@ const styles = StyleSheet.create({
   messageListContent: {
     padding: spacing.md,
     paddingBottom: spacing.lg,
+  },
+  emptyChat: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xxl,
+    gap: spacing.md,
+  },
+  emptyChatText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text.secondary,
+  },
+  emptyChatSubtext: {
+    fontSize: 14,
+    color: colors.text.muted,
+    textAlign: 'center',
   },
   messageContainer: {
     marginBottom: spacing.md,
@@ -594,117 +1103,79 @@ const styles = StyleSheet.create({
   messageTimeUser: {
     textAlign: 'right',
   },
-  toolCalls: {
-    marginTop: spacing.sm,
+  // Inline tool calls
+  inlineToolCalls: {
+    marginTop: spacing.md,
     gap: spacing.sm,
   },
-  toolCard: {
+  inlineToolCard: {
     backgroundColor: colors.bg.secondary,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: borderRadius.sm,
+    padding: spacing.sm,
+    borderLeftWidth: 3,
   },
-  toolHeader: {
+  inlineToolHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
   },
-  toolIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: borderRadius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  toolInfo: {
+  inlineToolName: {
     flex: 1,
-  },
-  toolName: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: colors.text.primary,
   },
-  toolInput: {
-    fontSize: 11,
-    color: colors.text.muted,
-    marginTop: 1,
-  },
-  toolStatusBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.full,
-  },
-  toolStatusText: {
-    fontSize: 11,
-    fontWeight: '500',
-    textTransform: 'capitalize',
-  },
-  toolActions: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  toolActionButton: {
-    flex: 1,
-    flexDirection: 'row',
+  inlineToolStatus: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.md,
-    gap: spacing.xs,
   },
-  toolRejectButton: {
-    backgroundColor: colors.accent.red + '15',
-    borderWidth: 1,
-    borderColor: colors.accent.red + '30',
+  inlineToolUse: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
   },
-  toolApproveButton: {
-    backgroundColor: colors.accent.green + '15',
-    borderWidth: 1,
-    borderColor: colors.accent.green + '30',
+  inlineToolIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  toolActionText: {
+  inlineToolText: {
     fontSize: 13,
-    fontWeight: '600',
+    color: colors.accent.cyan,
+    fontWeight: '500',
+  },
+  // Streaming
+  streamingIndicator: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    marginTop: spacing.xs,
+    alignSelf: 'flex-start',
   },
   typingIndicator: {
-    flexDirection: 'row',
     alignSelf: 'flex-start',
     backgroundColor: colors.bg.card,
     padding: spacing.md,
     borderRadius: borderRadius.lg,
     borderWidth: 1,
     borderColor: colors.border,
+  },
+  pulsingDotsContainer: {
+    flexDirection: 'row',
     gap: spacing.xs,
   },
-  typingDot: {
+  pulsingDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: colors.text.muted,
-    opacity: 0.4,
   },
-  typingDotDelay1: {
-    opacity: 0.6,
-  },
-  typingDotDelay2: {
-    opacity: 0.8,
-  },
-  streamingToolBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    backgroundColor: colors.accent.cyan + '20',
-    borderRadius: borderRadius.full,
-  },
-  streamingToolText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.accent.cyan,
-  },
+  // Input
   inputContainer: {
     flexDirection: 'row',
     padding: spacing.md,
@@ -736,6 +1207,123 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     backgroundColor: colors.bg.tertiary,
   },
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: colors.bg.primary,
+    borderTopLeftRadius: borderRadius.xl,
+    borderTopRightRadius: borderRadius.xl,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text.primary,
+  },
+  modalClose: {
+    padding: spacing.sm,
+  },
+  inputSection: {
+    padding: spacing.lg,
+    paddingTop: spacing.md,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.text.secondary,
+    marginBottom: spacing.sm,
+  },
+  nameInput: {
+    backgroundColor: colors.bg.tertiary,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    fontSize: 15,
+    color: colors.text.primary,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  providerTabs: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  providerTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.bg.secondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  providerTabText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.text.secondary,
+  },
+  modelList: {
+    padding: spacing.md,
+    paddingTop: 0,
+    maxHeight: 200,
+  },
+  modelOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.sm,
+    backgroundColor: colors.bg.secondary,
+  },
+  modelOptionSelected: {
+    backgroundColor: colors.accent.purple + '15',
+    borderWidth: 1,
+    borderColor: colors.accent.purple + '30',
+  },
+  modelOptionInfo: {
+    flex: 1,
+  },
+  modelOptionName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.text.primary,
+  },
+  modelOptionDesc: {
+    fontSize: 12,
+    color: colors.text.muted,
+    marginTop: 2,
+  },
+  createButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accent.purple,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.lg,
+    gap: spacing.sm,
+  },
+  createButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.bg.primary,
+  },
+  // Empty state
   emptyState: {
     flex: 1,
     alignItems: 'center',
@@ -750,6 +1338,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.xl,
+    overflow: 'hidden',
+  },
+  logoImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 12,
   },
   emptyTitle: {
     fontSize: 22,

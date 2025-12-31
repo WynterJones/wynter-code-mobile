@@ -438,11 +438,14 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   button: {
-    backgroundColor: colors.accent.purple,
+    backgroundColor: colors.accent.purple + '15',
     paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
     borderRadius: borderRadius.lg,
     alignItems: 'center',
     marginTop: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.accent.purple + '50',
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -450,7 +453,7 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.bg.primary,
+    color: colors.accent.purple,
   },
   helpText: {
     fontSize: 13,

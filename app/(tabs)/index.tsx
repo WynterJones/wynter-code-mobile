@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
@@ -75,7 +76,10 @@ export default function ProjectsScreen() {
       <View style={styles.container}>
         <View style={styles.emptyState}>
           <View style={styles.iconContainer}>
-            <FontAwesome name="plug" size={48} color={colors.text.muted} />
+            <Image
+              source={require('@/assets/images/icon.png')}
+              style={styles.logoImage}
+            />
           </View>
           <Text style={styles.emptyTitle}>Not Connected</Text>
           <Text style={styles.emptyText}>
@@ -110,9 +114,9 @@ export default function ProjectsScreen() {
           <Text style={styles.emptyText}>
             {error instanceof Error ? error.message : 'Unable to fetch workspaces'}
           </Text>
-          <TouchableOpacity style={styles.connectButton} onPress={() => refetch()}>
-            <FontAwesome name="refresh" size={18} color={colors.bg.primary} />
-            <Text style={styles.connectButtonText}>Try Again</Text>
+          <TouchableOpacity style={styles.connectButton} onPress={() => router.push('/modal')}>
+            <FontAwesome name="link" size={18} color={colors.bg.primary} />
+            <Text style={styles.connectButtonText}>Check Connection</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -523,6 +527,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.xl,
+    overflow: 'hidden',
+  },
+  logoImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 12,
   },
   emptyTitle: {
     fontSize: 22,

@@ -12,6 +12,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Image,
+  Switch,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
@@ -22,13 +24,18 @@ import { useIssues, useCreateIssue, useUpdateIssue, useCloseIssue } from '@/src/
 import { haptics } from '@/src/lib';
 import type { Issue, IssueStatus, IssueType, Priority, CreateIssueInput } from '@/src/types';
 
+type StatusFilter = 'all' | IssueStatus;
+type TypeFilter = 'all' | IssueType;
+
 export default function IssuesScreen() {
   const router = useRouter();
   const connection = useConnectionStore((s) => s.connection);
   const selectedProject = useProjectStore((s) => s.selectedProject);
   const { selectedIssue, selectIssue } = useBeadsStore();
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [filter, setFilter] = useState<'all' | IssueStatus>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  const [livePolling, setLivePolling] = useState(false);
 
   // React Query hooks for data fetching
   const {
@@ -38,7 +45,7 @@ export default function IssuesScreen() {
     error,
     refetch,
     isRefetching,
-  } = useIssues();
+  } = useIssues({ pollingEnabled: livePolling, pollingInterval: 5000 });
 
   const createIssueMutation = useCreateIssue();
   const updateIssueMutation = useUpdateIssue();
@@ -51,14 +58,26 @@ export default function IssuesScreen() {
 
   // Filter issues
   const filteredIssues = useMemo(() => {
-    if (filter === 'all') return issues;
-    return issues.filter((i) => i.status === filter);
-  }, [issues, filter]);
+    let result = issues;
+
+    // Apply status filter
+    if (statusFilter !== 'all') {
+      result = result.filter((i) => i.status === statusFilter);
+    }
+
+    // Apply type filter
+    if (typeFilter !== 'all') {
+      result = result.filter((i) => i.type === typeFilter);
+    }
+
+    return result;
+  }, [issues, statusFilter, typeFilter]);
 
   // Stats
   const openCount = issues.filter((i) => i.status === 'open').length;
   const inProgressCount = issues.filter((i) => i.status === 'in_progress').length;
   const closedCount = issues.filter((i) => i.status === 'closed').length;
+  const epicCount = issues.filter((i) => i.type === 'epic').length;
 
   // Not connected state
   if (!connection.device) {
@@ -66,7 +85,10 @@ export default function IssuesScreen() {
       <View style={styles.container}>
         <View style={styles.emptyState}>
           <View style={styles.iconContainer}>
-            <FontAwesome name="plug" size={48} color={colors.text.muted} />
+            <Image
+              source={require('@/assets/images/icon.png')}
+              style={styles.logoImage}
+            />
           </View>
           <Text style={styles.emptyTitle}>Not Connected</Text>
           <Text style={styles.emptyText}>
@@ -137,9 +159,9 @@ export default function IssuesScreen() {
           <Text style={styles.emptyText}>
             {error instanceof Error ? error.message : 'Unable to connect to desktop'}
           </Text>
-          <TouchableOpacity style={styles.button} onPress={() => refetch()}>
-            <FontAwesome name="refresh" size={16} color={colors.bg.primary} />
-            <Text style={styles.buttonText}>Try Again</Text>
+          <TouchableOpacity style={styles.button} onPress={() => router.push('/modal')}>
+            <FontAwesome name="link" size={16} color={colors.bg.primary} />
+            <Text style={styles.buttonText}>Check Connection</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -156,56 +178,148 @@ export default function IssuesScreen() {
         </View>
       </View>
 
-      {/* Stats */}
-      <View style={styles.stats}>
-        <TouchableOpacity
-          style={[styles.statCard, filter === 'all' && styles.statCardActive]}
-          onPress={() => {
-            haptics.selectionChanged();
-            setFilter('all');
-          }}
+      {/* Filter Bar */}
+      <View style={styles.filterSection}>
+        {/* Status Filter */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
         >
-          <Text style={[styles.statValue, filter === 'all' && styles.statValueActive]}>
-            {issues.length}
-          </Text>
-          <Text style={styles.statLabel}>All</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.statCard, filter === 'open' && styles.statCardActive]}
-          onPress={() => {
-            haptics.selectionChanged();
-            setFilter('open');
-          }}
-        >
-          <Text style={[styles.statValue, { color: colors.status.open }, filter === 'open' && styles.statValueActive]}>
-            {openCount}
-          </Text>
-          <Text style={styles.statLabel}>Open</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.statCard, filter === 'in_progress' && styles.statCardActive]}
-          onPress={() => {
-            haptics.selectionChanged();
-            setFilter('in_progress');
-          }}
-        >
-          <Text style={[styles.statValue, { color: colors.status.inProgress }, filter === 'in_progress' && styles.statValueActive]}>
-            {inProgressCount}
-          </Text>
-          <Text style={styles.statLabel}>Active</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.statCard, filter === 'closed' && styles.statCardActive]}
-          onPress={() => {
-            haptics.selectionChanged();
-            setFilter('closed');
-          }}
-        >
-          <Text style={[styles.statValue, { color: colors.status.done }, filter === 'closed' && styles.statValueActive]}>
-            {closedCount}
-          </Text>
-          <Text style={styles.statLabel}>Done</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterChip, statusFilter === 'open' && styles.filterChipActive]}
+            onPress={() => {
+              haptics.selectionChanged();
+              setStatusFilter('open');
+            }}
+          >
+            <View style={[styles.filterDot, { backgroundColor: colors.status.open }]} />
+            <Text style={[styles.filterChipText, statusFilter === 'open' && styles.filterChipTextActive]}>
+              Open ({openCount})
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterChip, statusFilter === 'in_progress' && styles.filterChipActive]}
+            onPress={() => {
+              haptics.selectionChanged();
+              setStatusFilter('in_progress');
+            }}
+          >
+            <View style={[styles.filterDot, { backgroundColor: colors.status.inProgress }]} />
+            <Text style={[styles.filterChipText, statusFilter === 'in_progress' && styles.filterChipTextActive]}>
+              Active ({inProgressCount})
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterChip, statusFilter === 'closed' && styles.filterChipActive]}
+            onPress={() => {
+              haptics.selectionChanged();
+              setStatusFilter('closed');
+            }}
+          >
+            <View style={[styles.filterDot, { backgroundColor: colors.status.done }]} />
+            <Text style={[styles.filterChipText, statusFilter === 'closed' && styles.filterChipTextActive]}>
+              Closed ({closedCount})
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        {/* Type Filter & Live Polling Row */}
+        <View style={styles.secondaryFilterRow}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.typeFilterRow}
+          >
+            <TouchableOpacity
+              style={[styles.typeChip, typeFilter === 'all' && styles.typeChipActive]}
+              onPress={() => {
+                haptics.selectionChanged();
+                setTypeFilter('all');
+              }}
+            >
+              <Text style={[styles.typeChipText, typeFilter === 'all' && styles.typeChipTextActive]}>
+                All Types
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.typeChip, typeFilter === 'epic' && styles.typeChipActive]}
+              onPress={() => {
+                haptics.selectionChanged();
+                setTypeFilter('epic');
+              }}
+            >
+              <FontAwesome name="rocket" size={10} color={typeFilter === 'epic' ? colors.accent.purple : colors.text.muted} />
+              <Text style={[styles.typeChipText, typeFilter === 'epic' && styles.typeChipTextActive]}>
+                Epics ({epicCount})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.typeChip, typeFilter === 'bug' && styles.typeChipActive]}
+              onPress={() => {
+                haptics.selectionChanged();
+                setTypeFilter('bug');
+              }}
+            >
+              <FontAwesome name="bug" size={10} color={typeFilter === 'bug' ? colors.accent.red : colors.text.muted} />
+              <Text style={[styles.typeChipText, typeFilter === 'bug' && styles.typeChipTextActive]}>
+                Bugs
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.typeChip, typeFilter === 'feature' && styles.typeChipActive]}
+              onPress={() => {
+                haptics.selectionChanged();
+                setTypeFilter('feature');
+              }}
+            >
+              <FontAwesome name="star" size={10} color={typeFilter === 'feature' ? colors.accent.green : colors.text.muted} />
+              <Text style={[styles.typeChipText, typeFilter === 'feature' && styles.typeChipTextActive]}>
+                Features
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.typeChip, typeFilter === 'task' && styles.typeChipActive]}
+              onPress={() => {
+                haptics.selectionChanged();
+                setTypeFilter('task');
+              }}
+            >
+              <FontAwesome name="check-square-o" size={10} color={typeFilter === 'task' ? colors.accent.blue : colors.text.muted} />
+              <Text style={[styles.typeChipText, typeFilter === 'task' && styles.typeChipTextActive]}>
+                Tasks
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+
+        {/* Live Polling Toggle */}
+        <View style={styles.pollingRow}>
+          <View style={styles.pollingLabel}>
+            <FontAwesome
+              name="refresh"
+              size={12}
+              color={livePolling ? colors.accent.green : colors.text.muted}
+            />
+            <Text style={[styles.pollingText, livePolling && styles.pollingTextActive]}>
+              Live Refresh
+            </Text>
+            {livePolling && (
+              <View style={styles.liveBadge}>
+                <Text style={styles.liveBadgeText}>ON</Text>
+              </View>
+            )}
+          </View>
+          <Switch
+            value={livePolling}
+            onValueChange={(value) => {
+              haptics.selectionChanged();
+              setLivePolling(value);
+            }}
+            trackColor={{ false: colors.bg.tertiary, true: colors.accent.green + '50' }}
+            thumbColor={livePolling ? colors.accent.green : colors.text.muted}
+          />
+        </View>
       </View>
 
       {/* Issues List */}
@@ -224,7 +338,9 @@ export default function IssuesScreen() {
           <View style={styles.emptyList}>
             <FontAwesome name="check-circle" size={32} color={colors.text.muted} />
             <Text style={styles.emptyListText}>
-              {filter === 'all' ? 'No issues yet' : `No ${filter.replace('_', ' ')} issues`}
+              {statusFilter === 'all' && typeFilter === 'all'
+                ? 'No issues yet'
+                : `No ${typeFilter !== 'all' ? typeFilter + ' ' : ''}${statusFilter !== 'all' ? statusFilter.replace('_', ' ') + ' ' : ''}issues`}
             </Text>
           </View>
         ) : (
@@ -313,18 +429,20 @@ function IssueCard({ issue, onPress }: { issue: Issue; onPress: () => void }) {
   return (
     <TouchableOpacity style={styles.issueCard} onPress={handlePress} activeOpacity={0.7}>
       <View style={styles.issueHeader}>
-        <View style={[styles.typeIcon, { backgroundColor: typeColors[issue.type] + '20' }]}>
-          <FontAwesome
-            name={typeIcons[issue.type] as any}
-            size={14}
-            color={typeColors[issue.type]}
-          />
+        <View style={styles.issueHeaderLeft}>
+          <View style={[styles.typeIcon, { backgroundColor: (typeColors[issue.type] || colors.accent.blue) + '20' }]}>
+            <FontAwesome
+              name={(typeIcons[issue.type] || 'circle') as any}
+              size={14}
+              color={typeColors[issue.type] || colors.accent.blue}
+            />
+          </View>
+          <Text style={styles.issueTitle} numberOfLines={1}>{issue.title}</Text>
         </View>
         <View style={styles.priorityBadge}>
           <Text style={styles.priorityText}>P{issue.priority}</Text>
         </View>
       </View>
-      <Text style={styles.issueTitle} numberOfLines={2}>{issue.title}</Text>
       <View style={styles.issueFooter}>
         <View style={[styles.statusBadge, { backgroundColor: statusColors[issue.status] + '20' }]}>
           <View style={[styles.statusDot, { backgroundColor: statusColors[issue.status] }]} />
@@ -700,36 +818,102 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.text.primary,
   },
-  stats: {
-    flexDirection: 'row',
-    padding: spacing.md,
-    gap: spacing.sm,
+  filterSection: {
     backgroundColor: colors.bg.secondary,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
-  },
-  statCard: {
-    flex: 1,
-    alignItems: 'center',
     paddingVertical: spacing.sm,
-    borderRadius: borderRadius.md,
   },
-  statCardActive: {
+  filterRow: {
+    paddingHorizontal: spacing.md,
+    gap: spacing.sm,
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.full,
     backgroundColor: colors.bg.tertiary,
+    gap: spacing.xs,
   },
-  statValue: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: colors.text.primary,
+  filterChipActive: {
+    backgroundColor: colors.accent.purple + '20',
+    borderWidth: 1,
+    borderColor: colors.accent.purple + '50',
   },
-  statValueActive: {
+  filterChipText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.text.muted,
+  },
+  filterChipTextActive: {
     color: colors.accent.purple,
   },
-  statLabel: {
+  filterDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  secondaryFilterRow: {
+    marginTop: spacing.sm,
+  },
+  typeFilterRow: {
+    paddingHorizontal: spacing.md,
+    gap: spacing.xs,
+  },
+  typeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.bg.tertiary,
+    gap: 4,
+  },
+  typeChipActive: {
+    backgroundColor: colors.accent.purple + '15',
+  },
+  typeChipText: {
     fontSize: 11,
+    fontWeight: '500',
     color: colors.text.muted,
-    marginTop: 2,
-    textTransform: 'uppercase',
+  },
+  typeChipTextActive: {
+    color: colors.accent.purple,
+  },
+  pollingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    marginTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  pollingLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  pollingText: {
+    fontSize: 13,
+    color: colors.text.muted,
+  },
+  pollingTextActive: {
+    color: colors.accent.green,
+  },
+  liveBadge: {
+    backgroundColor: colors.accent.green + '20',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: borderRadius.full,
+  },
+  liveBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: colors.accent.green,
   },
   loadingContainer: {
     flex: 1,
@@ -768,8 +952,15 @@ const styles = StyleSheet.create({
   issueHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: spacing.sm,
+  },
+  issueHeaderLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.sm,
+    marginRight: spacing.sm,
   },
   typeIcon: {
     width: 28,
@@ -790,10 +981,10 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
   },
   issueTitle: {
+    flex: 1,
     fontSize: 15,
     fontWeight: '600',
     color: colors.text.primary,
-    marginBottom: spacing.sm,
     lineHeight: 20,
   },
   issueFooter: {
@@ -853,6 +1044,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.xl,
+    overflow: 'hidden',
+  },
+  logoImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 12,
   },
   emptyTitle: {
     fontSize: 22,

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,8 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
+  Image,
+  Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
@@ -18,8 +20,11 @@ import {
   useStartAutoBuild,
   usePauseAutoBuild,
   useStopAutoBuild,
+  useAddToAutoBuildQueue,
+  useRemoveFromAutoBuildQueue,
+  useIssues,
 } from '@/src/api/hooks';
-import type { Worker, QueueItem, LogEntry, AutoBuildStatus } from '@/src/types';
+import type { QueueItem, LogEntry, AutoBuildStatus, AutoBuildPhase, Issue } from '@/src/types';
 
 export default function AutoBuildScreen() {
   const router = useRouter();
@@ -27,13 +32,18 @@ export default function AutoBuildScreen() {
   const selectedProject = useProjectStore((s) => s.selectedProject);
   const buildState = useAutoBuildStore((s) => s.state);
 
-  // Query hook for initial data load and WebSocket subscription
-  const { refetch, isLoading, isRefetching } = useAutoBuildStatus();
+  const [showAddModal, setShowAddModal] = useState(false);
+
+  // Query hooks
+  const { refetch, isLoading, isRefetching, isError, error } = useAutoBuildStatus();
+  const { data: issues = [] } = useIssues();
 
   // Mutation hooks for controls
   const startMutation = useStartAutoBuild();
   const pauseMutation = usePauseAutoBuild();
   const stopMutation = useStopAutoBuild();
+  const addToQueueMutation = useAddToAutoBuildQueue();
+  const removeFromQueueMutation = useRemoveFromAutoBuildQueue();
 
   const isControlLoading = startMutation.isPending || pauseMutation.isPending || stopMutation.isPending;
 
@@ -47,17 +57,31 @@ export default function AutoBuildScreen() {
     await refetch();
   }, [refetch]);
 
+  // Filter open issues that can be added to backlog
+  const availableIssues = useMemo(() => {
+    const queuedIds = new Set(buildState.queue.map(q => q.id));
+    return issues.filter(
+      (issue) =>
+        issue.status === 'open' &&
+        issue.type !== 'epic' &&
+        !queuedIds.has(issue.id)
+    );
+  }, [issues, buildState.queue]);
+
   // Not connected state
   if (!connection.device) {
     return (
       <View style={styles.container}>
         <View style={styles.emptyState}>
           <View style={styles.iconContainer}>
-            <FontAwesome name="plug" size={48} color={colors.text.muted} />
+            <Image
+              source={require('@/assets/images/icon.png')}
+              style={styles.logoImage}
+            />
           </View>
           <Text style={styles.emptyTitle}>Not Connected</Text>
           <Text style={styles.emptyText}>
-            Connect to your desktop to monitor auto-build.
+            Connect to your desktop to use Auto-Build.
           </Text>
           <TouchableOpacity style={styles.button} onPress={() => router.push('/modal')}>
             <Text style={styles.buttonText}>Connect to Desktop</Text>
@@ -77,11 +101,38 @@ export default function AutoBuildScreen() {
           </View>
           <Text style={styles.emptyTitle}>No Project Selected</Text>
           <Text style={styles.emptyText}>
-            Select a project from the Projects tab to monitor its auto-build status.
+            Select a project from the Projects tab to use Auto-Build.
           </Text>
           <TouchableOpacity style={styles.button} onPress={() => router.push('/')}>
             <FontAwesome name="folder" size={16} color={colors.bg.primary} />
             <Text style={styles.buttonText}>Go to Projects</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  // Error state
+  if (isError) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <View style={styles.projectBadge}>
+            <FontAwesome name="folder-open" size={14} color={colors.accent.purple} />
+            <Text style={styles.projectName}>{selectedProject.name}</Text>
+          </View>
+        </View>
+        <View style={styles.emptyState}>
+          <View style={styles.iconContainer}>
+            <FontAwesome name="exclamation-triangle" size={48} color={colors.accent.red} />
+          </View>
+          <Text style={styles.emptyTitle}>Failed to Load</Text>
+          <Text style={styles.emptyText}>
+            {error instanceof Error ? error.message : 'Unable to connect to desktop'}
+          </Text>
+          <TouchableOpacity style={styles.button} onPress={() => router.push('/modal')}>
+            <FontAwesome name="link" size={16} color={colors.bg.primary} />
+            <Text style={styles.buttonText}>Check Connection</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -95,6 +146,28 @@ export default function AutoBuildScreen() {
     idle: colors.text.muted,
     error: colors.accent.red,
   };
+
+  const getPhaseLabel = (phase: AutoBuildPhase): string => {
+    switch (phase) {
+      case 'selecting': return 'Selecting';
+      case 'working': return 'Working';
+      case 'selfReviewing': return 'Self Review';
+      case 'auditing': return 'Auditing';
+      case 'testing': return 'Testing';
+      case 'fixing': return 'Fixing';
+      case 'reviewing': return 'Review';
+      case 'committing': return 'Committing';
+      default: return '';
+    }
+  };
+
+  // Find current issue being worked on
+  const currentIssue = buildState.currentIssueId
+    ? buildState.queue.find(q => q.id === buildState.currentIssueId)
+    : null;
+
+  // Backlog items (excluding current)
+  const backlogItems = buildState.queue.filter(q => q.id !== buildState.currentIssueId);
 
   return (
     <View style={styles.container}>
@@ -127,13 +200,13 @@ export default function AutoBuildScreen() {
             {buildState.currentPhase && (
               <View style={styles.phaseBadge}>
                 <Text style={styles.phaseText}>
-                  {buildState.currentPhase.replace(/([A-Z])/g, ' $1').trim()}
+                  {getPhaseLabel(buildState.currentPhase)}
                 </Text>
               </View>
             )}
           </View>
           <Text style={styles.queueCount}>
-            {buildState.queue.length} items in queue
+            {buildState.queue.length} in backlog
           </Text>
           {buildState.status === 'running' && buildState.progress > 0 && (
             <View style={styles.overallProgressBar}>
@@ -227,36 +300,84 @@ export default function AutoBuildScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Workers */}
-        <Text style={styles.sectionTitle}>Workers</Text>
+        {/* Current Work - only show if running */}
+        {buildState.status === 'running' && currentIssue && (
+          <>
+            <Text style={styles.sectionTitle}>In Progress</Text>
+            <CurrentWorkCard item={currentIssue} phase={buildState.currentPhase} progress={buildState.progress} />
+          </>
+        )}
+
+        {/* Human Review */}
+        {buildState.humanReview.length > 0 && (
+          <>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Human Review ({buildState.humanReview.length})</Text>
+            </View>
+            {buildState.humanReview.map((item) => (
+              <LifecycleItemCard key={item.id} item={item} stage="review" />
+            ))}
+          </>
+        )}
+
+        {/* Completed */}
+        {buildState.completed.length > 0 && (
+          <>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Completed ({buildState.completed.length})</Text>
+            </View>
+            {buildState.completed.slice(-5).map((item) => (
+              <LifecycleItemCard key={item.id} item={item} stage="completed" />
+            ))}
+          </>
+        )}
+
+        {/* Backlog */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Backlog ({backlogItems.length})</Text>
+          <TouchableOpacity
+            style={styles.addButton}
+            onPress={() => setShowAddModal(true)}
+            disabled={availableIssues.length === 0}
+          >
+            <FontAwesome
+              name="plus"
+              size={12}
+              color={availableIssues.length > 0 ? colors.accent.purple : colors.text.muted}
+            />
+            <Text
+              style={[
+                styles.addButtonText,
+                { color: availableIssues.length > 0 ? colors.accent.purple : colors.text.muted },
+              ]}
+            >
+              Add
+            </Text>
+          </TouchableOpacity>
+        </View>
         {isLoading ? (
           <View style={styles.emptySection}>
             <ActivityIndicator size="small" color={colors.accent.purple} />
           </View>
-        ) : buildState.workers.length === 0 ? (
+        ) : backlogItems.length === 0 ? (
           <View style={styles.emptySection}>
-            <Text style={styles.emptySectionText}>No active workers</Text>
+            <FontAwesome name="inbox" size={24} color={colors.text.muted} style={{ marginBottom: spacing.sm }} />
+            <Text style={styles.emptySectionText}>Backlog is empty</Text>
+            <Text style={styles.emptySectionHint}>Add issues to start auto-building</Text>
           </View>
         ) : (
-          buildState.workers.map((worker) => (
-            <WorkerCard key={worker.id} worker={worker} />
+          backlogItems.map((item, index) => (
+            <BacklogItemCard
+              key={item.id}
+              item={item}
+              position={index + 1}
+              onRemove={() => removeFromQueueMutation.mutate(item.id)}
+            />
           ))
         )}
 
-        {/* Queue */}
-        <Text style={styles.sectionTitle}>Queue ({buildState.queue.length})</Text>
-        {buildState.queue.length === 0 ? (
-          <View style={styles.emptySection}>
-            <Text style={styles.emptySectionText}>Queue is empty</Text>
-          </View>
-        ) : (
-          buildState.queue.map((item, index) => (
-            <QueueItemCard key={item.id} item={item} position={index + 1} />
-          ))
-        )}
-
-        {/* Recent Logs */}
-        <Text style={styles.sectionTitle}>Recent Logs</Text>
+        {/* Recent Activity */}
+        <Text style={[styles.sectionTitle, { marginTop: spacing.lg, marginBottom: spacing.md }]}>Activity</Text>
         <View style={styles.logsCard}>
           {isLoading ? (
             <View style={styles.emptySection}>
@@ -264,82 +385,147 @@ export default function AutoBuildScreen() {
             </View>
           ) : buildState.logs.length === 0 ? (
             <View style={styles.emptySection}>
-              <Text style={styles.emptySectionText}>No logs yet</Text>
+              <Text style={styles.emptySectionText}>No activity yet</Text>
             </View>
           ) : (
-            buildState.logs.map((log) => (
+            buildState.logs.slice(-10).map((log) => (
               <LogEntryRow key={log.id} log={log} />
             ))
           )}
         </View>
       </ScrollView>
+
+      {/* Add to Backlog Modal */}
+      <AddToBacklogModal
+        visible={showAddModal}
+        issues={availableIssues}
+        onClose={() => setShowAddModal(false)}
+        onAdd={(issueId) => {
+          addToQueueMutation.mutate(issueId);
+          setShowAddModal(false);
+        }}
+      />
     </View>
   );
 }
 
-function WorkerCard({ worker }: { worker: Worker }) {
-  const statusConfig = {
-    idle: { color: colors.text.muted, icon: 'moon-o', label: 'Idle' },
-    working: { color: colors.accent.green, icon: 'bolt', label: 'Working' },
-    error: { color: colors.accent.red, icon: 'exclamation-triangle', label: 'Error' },
-    paused: { color: colors.accent.yellow, icon: 'pause', label: 'Paused' },
+// Current work card showing active progress
+function CurrentWorkCard({
+  item,
+  phase,
+  progress,
+}: {
+  item: QueueItem;
+  phase?: AutoBuildPhase;
+  progress: number;
+}) {
+  const getPhaseIcon = (phase?: AutoBuildPhase) => {
+    switch (phase) {
+      case 'working': return 'wrench';
+      case 'selfReviewing': return 'eye';
+      case 'auditing': return 'search';
+      case 'testing': return 'flask';
+      case 'fixing': return 'wrench';
+      case 'committing': return 'git-square';
+      case 'reviewing': return 'eye';
+      default: return 'bolt';
+    }
   };
 
-  const config = statusConfig[worker.status];
-
   return (
-    <View style={styles.workerCard}>
-      <View style={styles.workerHeader}>
-        <View style={[styles.workerIcon, { backgroundColor: config.color + '20' }]}>
-          <FontAwesome name={config.icon as any} size={16} color={config.color} />
+    <View style={styles.currentWorkCard}>
+      <View style={styles.currentWorkHeader}>
+        <View style={[styles.currentWorkIcon, { backgroundColor: colors.accent.green + '20' }]}>
+          <FontAwesome name={getPhaseIcon(phase) as any} size={16} color={colors.accent.green} />
         </View>
-        <View style={styles.workerInfo}>
-          <Text style={styles.workerName}>{worker.name}</Text>
-          <Text style={[styles.workerStatus, { color: config.color }]}>{config.label}</Text>
-        </View>
-        {worker.progress !== undefined && (
-          <Text style={styles.workerProgress}>{worker.progress}%</Text>
-        )}
-      </View>
-      {worker.currentTask && (
-        <View style={styles.workerTask}>
-          <Text style={styles.workerTaskText} numberOfLines={1}>
-            {worker.currentTask}
+        <View style={styles.currentWorkInfo}>
+          <Text style={styles.currentWorkTitle} numberOfLines={1}>
+            {item.description}
+          </Text>
+          <Text style={styles.currentWorkPhase}>
+            {phase ? phase.replace(/([A-Z])/g, ' $1').trim() : 'Processing'}
           </Text>
         </View>
-      )}
-      {worker.progress !== undefined && (
-        <View style={styles.progressBar}>
-          <View style={[styles.progressFill, { width: `${worker.progress}%` }]} />
-        </View>
-      )}
+        {progress > 0 && (
+          <Text style={styles.currentWorkProgress}>{progress}%</Text>
+        )}
+      </View>
+      <View style={styles.progressBar}>
+        <View style={[styles.progressFill, { width: `${progress}%` }]} />
+      </View>
     </View>
   );
 }
 
-function QueueItemCard({ item, position }: { item: QueueItem; position: number }) {
+// Backlog item card with remove button
+function BacklogItemCard({
+  item,
+  position,
+  onRemove,
+}: {
+  item: QueueItem;
+  position: number;
+  onRemove: () => void;
+}) {
   return (
-    <View style={styles.queueItem}>
-      <View style={styles.queuePosition}>
-        <Text style={styles.queuePositionText}>{position}</Text>
+    <View style={styles.backlogItem}>
+      <View style={styles.backlogPosition}>
+        <Text style={styles.backlogPositionText}>{position}</Text>
       </View>
-      <View style={styles.queueContent}>
-        <Text style={styles.queueText} numberOfLines={1}>
+      <View style={styles.backlogContent}>
+        <Text style={styles.backlogText} numberOfLines={1}>
           {item.description}
         </Text>
-        <Text style={styles.queueMeta}>
+        <Text style={styles.backlogMeta}>
           Added {formatTime(item.createdAt)}
         </Text>
       </View>
-      <View style={[styles.queueStatusBadge, { backgroundColor: colors.accent.blue + '20' }]}>
-        <Text style={[styles.queueStatusText, { color: colors.accent.blue }]}>
-          {item.status}
+      <TouchableOpacity onPress={onRemove} style={styles.removeButton}>
+        <FontAwesome name="times" size={14} color={colors.text.muted} />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// Lifecycle item card (for human review and completed stages)
+function LifecycleItemCard({
+  item,
+  stage,
+}: {
+  item: QueueItem;
+  stage: 'review' | 'completed';
+}) {
+  const stageConfig = {
+    review: {
+      color: colors.accent.yellow,
+      icon: 'eye' as const,
+      label: 'Awaiting Review',
+    },
+    completed: {
+      color: colors.accent.green,
+      icon: 'check-circle' as const,
+      label: 'Completed',
+    },
+  };
+
+  const config = stageConfig[stage];
+
+  return (
+    <View style={[styles.lifecycleItem, { borderLeftColor: config.color }]}>
+      <View style={[styles.lifecycleIcon, { backgroundColor: config.color + '20' }]}>
+        <FontAwesome name={config.icon} size={14} color={config.color} />
+      </View>
+      <View style={styles.lifecycleContent}>
+        <Text style={styles.lifecycleText} numberOfLines={1}>
+          {item.description}
         </Text>
+        <Text style={styles.lifecycleMeta}>{config.label}</Text>
       </View>
     </View>
   );
 }
 
+// Log entry row
 function LogEntryRow({ log }: { log: LogEntry }) {
   const levelColors: Record<string, string> = {
     info: colors.accent.blue,
@@ -368,6 +554,70 @@ function LogEntryRow({ log }: { log: LogEntry }) {
       </Text>
       <Text style={styles.logTime}>{formatTime(log.timestamp)}</Text>
     </View>
+  );
+}
+
+// Add to backlog modal
+function AddToBacklogModal({
+  visible,
+  issues,
+  onClose,
+  onAdd,
+}: {
+  visible: boolean;
+  issues: Issue[];
+  onClose: () => void;
+  onAdd: (issueId: string) => void;
+}) {
+  const typeColors: Record<string, { bg: string; text: string }> = {
+    bug: { bg: colors.accent.red + '20', text: colors.accent.red },
+    feature: { bg: colors.accent.green + '20', text: colors.accent.green },
+    task: { bg: colors.accent.blue + '20', text: colors.accent.blue },
+    epic: { bg: colors.accent.purple + '20', text: colors.accent.purple },
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Add to Backlog</Text>
+            <TouchableOpacity onPress={onClose} style={styles.modalClose}>
+              <FontAwesome name="times" size={18} color={colors.text.secondary} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.modalList}>
+            {issues.length === 0 ? (
+              <View style={styles.modalEmpty}>
+                <Text style={styles.emptySectionText}>No open issues available</Text>
+              </View>
+            ) : (
+              issues.map((issue) => (
+                <TouchableOpacity
+                  key={issue.id}
+                  style={styles.issueOption}
+                  onPress={() => onAdd(issue.id)}
+                >
+                  <View style={[styles.typeBadge, { backgroundColor: typeColors[issue.type]?.bg }]}>
+                    <Text style={[styles.typeBadgeText, { color: typeColors[issue.type]?.text }]}>
+                      {issue.type}
+                    </Text>
+                  </View>
+                  <Text style={styles.issueOptionTitle} numberOfLines={2}>
+                    {issue.title}
+                  </Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -484,74 +734,96 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+    marginTop: spacing.md,
+  },
   sectionTitle: {
     fontSize: 12,
     fontWeight: '600',
     color: colors.text.muted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginBottom: spacing.md,
-    marginTop: spacing.md,
+  },
+  addButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.bg.card,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  addButtonText: {
+    fontSize: 13,
+    fontWeight: '500',
   },
   emptySection: {
-    padding: spacing.lg,
+    padding: spacing.xl,
     alignItems: 'center',
+    backgroundColor: colors.bg.card,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   emptySectionText: {
     fontSize: 14,
     color: colors.text.muted,
   },
-  workerCard: {
+  emptySectionHint: {
+    fontSize: 12,
+    color: colors.text.muted,
+    marginTop: spacing.xs,
+  },
+  // Current work styles
+  currentWorkCard: {
     backgroundColor: colors.bg.card,
     padding: spacing.lg,
     borderRadius: borderRadius.lg,
     marginBottom: spacing.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.accent.green + '40',
   },
-  workerHeader: {
+  currentWorkHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
+    marginBottom: spacing.md,
   },
-  workerIcon: {
+  currentWorkIcon: {
     width: 40,
     height: 40,
     borderRadius: borderRadius.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  workerInfo: {
+  currentWorkInfo: {
     flex: 1,
   },
-  workerName: {
+  currentWorkTitle: {
     fontSize: 15,
     fontWeight: '600',
     color: colors.text.primary,
   },
-  workerStatus: {
+  currentWorkPhase: {
     fontSize: 13,
+    color: colors.accent.green,
+    textTransform: 'capitalize',
   },
-  workerProgress: {
+  currentWorkProgress: {
     fontSize: 14,
     fontWeight: '600',
     color: colors.accent.green,
-  },
-  workerTask: {
-    backgroundColor: colors.bg.tertiary,
-    padding: spacing.sm,
-    borderRadius: borderRadius.sm,
-    marginTop: spacing.md,
-  },
-  workerTaskText: {
-    fontSize: 13,
-    color: colors.text.secondary,
   },
   progressBar: {
     height: 4,
     backgroundColor: colors.bg.tertiary,
     borderRadius: 2,
-    marginTop: spacing.md,
     overflow: 'hidden',
   },
   progressFill: {
@@ -559,7 +831,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent.green,
     borderRadius: 2,
   },
-  queueItem: {
+  // Backlog styles
+  backlogItem: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.bg.card,
@@ -570,7 +843,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     gap: spacing.md,
   },
-  queuePosition: {
+  backlogPosition: {
     width: 28,
     height: 28,
     borderRadius: 14,
@@ -578,34 +851,62 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  queuePositionText: {
+  backlogPositionText: {
     fontSize: 12,
     fontWeight: '700',
     color: colors.text.secondary,
   },
-  queueContent: {
+  backlogContent: {
     flex: 1,
   },
-  queueText: {
+  backlogText: {
     fontSize: 14,
     color: colors.text.primary,
     fontWeight: '500',
   },
-  queueMeta: {
+  backlogMeta: {
     fontSize: 11,
     color: colors.text.muted,
     marginTop: 2,
   },
-  queueStatusBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.full,
+  removeButton: {
+    padding: spacing.sm,
+    marginLeft: spacing.sm,
   },
-  queueStatusText: {
-    fontSize: 11,
+  // Lifecycle styles (for review and completed stages)
+  lifecycleItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bg.card,
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderLeftWidth: 3,
+    gap: spacing.md,
+  },
+  lifecycleIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lifecycleContent: {
+    flex: 1,
+  },
+  lifecycleText: {
+    fontSize: 14,
+    color: colors.text.primary,
     fontWeight: '500',
-    textTransform: 'capitalize',
   },
+  lifecycleMeta: {
+    fontSize: 11,
+    color: colors.text.muted,
+    marginTop: 2,
+  },
+  // Log styles
   logsCard: {
     backgroundColor: colors.bg.card,
     padding: spacing.md,
@@ -631,6 +932,65 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.text.muted,
   },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: colors.bg.primary,
+    borderTopLeftRadius: borderRadius.xl,
+    borderTopRightRadius: borderRadius.xl,
+    maxHeight: '70%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text.primary,
+  },
+  modalClose: {
+    padding: spacing.sm,
+  },
+  modalList: {
+    padding: spacing.lg,
+  },
+  modalEmpty: {
+    padding: spacing.xl,
+    alignItems: 'center',
+  },
+  issueOption: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  typeBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.sm,
+  },
+  typeBadgeText: {
+    fontSize: 11,
+    fontWeight: '500',
+    textTransform: 'capitalize',
+  },
+  issueOptionTitle: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.text.primary,
+  },
+  // Empty state styles
   emptyState: {
     flex: 1,
     alignItems: 'center',
@@ -645,6 +1005,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.xl,
+    overflow: 'hidden',
+  },
+  logoImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 12,
   },
   emptyTitle: {
     fontSize: 22,
