@@ -56,6 +56,69 @@ function formatTimeAgo(timestamp?: number): string {
   return new Date(timestamp).toLocaleDateString();
 }
 
+// Format camelCase/snake_case keys to readable labels
+function formatMetricLabel(key: string): string {
+  const labelMap: Record<string, string> = {
+    buildStatus: 'Build Status',
+    deployTime: 'Deploy Time',
+    lastPublishedAt: 'Last Published',
+    siteName: 'Site Name',
+    bounceRate: 'Bounce Rate',
+    pageviews: 'Pageviews',
+    visitDuration: 'Visit Duration',
+    visitors: 'Visitors',
+    deploymentStatus: 'Deployment',
+    environmentName: 'Environment',
+    lastDeployedAt: 'Last Deployed',
+    serviceCount: 'Services',
+    crashFreeRate: 'Crash Free',
+    eventsLast24H: 'Events (24h)',
+    unresolvedIssues: 'Unresolved',
+    totalIssues: 'Total Issues',
+  };
+
+  if (labelMap[key]) return labelMap[key];
+
+  // Convert camelCase to Title Case with spaces
+  return key
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/^./, (str) => str.toUpperCase())
+    .replace(/_/g, ' ')
+    .trim();
+}
+
+// Format metric values (timestamps, percentages, etc.)
+function formatMetricValue(key: string, value: unknown): string {
+  if (value === null || value === undefined) return '-';
+
+  const strValue = String(value);
+
+  // Check if it's a timestamp (large number that looks like ms since epoch)
+  if (
+    typeof value === 'number' &&
+    (key.toLowerCase().includes('at') || key.toLowerCase().includes('time') || key.toLowerCase().includes('deployed')) &&
+    value > 1000000000000
+  ) {
+    const date = new Date(value);
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  // Format percentages
+  if (key.toLowerCase().includes('rate')) {
+    return `${value}%`;
+  }
+
+  // Format durations (assume seconds)
+  if (key.toLowerCase().includes('duration')) {
+    const secs = Number(value);
+    if (secs < 60) return `${secs}s`;
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+    return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+  }
+
+  return strValue;
+}
+
 function ServiceCard({ service }: { service: OverwatchService }) {
   const isLink = service.provider === 'link';
   const iconName = PROVIDER_ICONS[service.provider] as keyof typeof FontAwesome.glyphMap;
@@ -110,8 +173,8 @@ function ServiceCard({ service }: { service: OverwatchService }) {
           <View style={styles.metricsGrid}>
             {Object.entries(service.metrics).slice(0, 4).map(([key, value]) => (
               <View key={key} style={styles.metricItem}>
-                <Text style={styles.metricLabel}>{key.replace(/_/g, ' ')}</Text>
-                <Text style={styles.metricValue}>{String(value)}</Text>
+                <Text style={styles.metricLabel}>{formatMetricLabel(key)}</Text>
+                <Text style={styles.metricValue}>{formatMetricValue(key, value)}</Text>
               </View>
             ))}
           </View>
@@ -245,6 +308,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: spacing.md,
+    paddingBottom: 100,
     gap: spacing.md,
   },
   card: {

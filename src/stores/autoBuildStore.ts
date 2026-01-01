@@ -130,7 +130,7 @@ export const useAutoBuildStore = create<AutoBuildStore>((set, get) => {
       }));
 
       // Map human review items
-      const humanReview: QueueItem[] = (status.human_review || []).map((q) => ({
+      const humanReview: QueueItem[] = (status.human_review || []).map((q: { id: string; title: string; created_at: string }) => ({
         id: q.id,
         description: q.title,
         status: 'pending' as const,
@@ -138,7 +138,7 @@ export const useAutoBuildStore = create<AutoBuildStore>((set, get) => {
       }));
 
       // Map completed items
-      const completed: QueueItem[] = (status.completed || []).map((q) => ({
+      const completed: QueueItem[] = (status.completed || []).map((q: { id: string; title: string; created_at: string }) => ({
         id: q.id,
         description: q.title,
         status: 'completed' as const,

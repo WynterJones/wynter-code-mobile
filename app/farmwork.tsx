@@ -50,9 +50,10 @@ interface AuditMetadata {
 }
 
 function ScoreCard({ title, icon, score, color }: { title: string; icon: string; score: number; color: string }) {
+  // Score is out of 10, not percentage
   const getScoreColor = (s: number) => {
-    if (s >= 80) return colors.accent.green;
-    if (s >= 60) return colors.accent.yellow;
+    if (s >= 8) return colors.accent.green;
+    if (s >= 6) return colors.accent.yellow;
     return colors.accent.red;
   };
 
@@ -63,7 +64,7 @@ function ScoreCard({ title, icon, score, color }: { title: string; icon: string;
       </View>
       <Text style={styles.scoreTitle}>{title}</Text>
       <Text style={[styles.scoreValue, { color: getScoreColor(score) }]}>
-        {Math.round(score)}%
+        {score % 1 === 0 ? score.toFixed(0) : score.toFixed(1)}
       </Text>
     </View>
   );
@@ -239,30 +240,30 @@ export default function FarmworkScreen() {
                 title="Farmhouse"
                 icon="home"
                 score={stats.audit_scores.farmhouse.score}
-                color={colors.accent.peach}
+                color={colors.accent.orange}
               />
             </View>
 
             {/* Garden Stats */}
-            <Text style={styles.sectionTitle}>Garden</Text>
+            <Text style={styles.sectionTitle}>Idea Garden</Text>
             <View style={styles.statsRow}>
               <StatCard
-                label="Planted"
+                label="Ideas"
                 value={stats.garden_stats.planted}
-                icon="seedling"
-                color={colors.accent.green}
-              />
-              <StatCard
-                label="Growing"
-                value={stats.garden_stats.growing}
-                icon="pagelines"
+                icon="lightbulb-o"
                 color={colors.accent.yellow}
               />
               <StatCard
-                label="Picked"
-                value={stats.garden_stats.picked}
-                icon="check"
-                color={colors.accent.blue}
+                label="Plans"
+                value={stats.garden_stats.growing}
+                icon="file-text-o"
+                color={colors.accent.purple}
+              />
+              <StatCard
+                label="Compost"
+                value={stats.compost_stats.rejected_ideas}
+                icon="recycle"
+                color={colors.text.muted}
               />
             </View>
 
@@ -297,7 +298,7 @@ export default function FarmworkScreen() {
 
         {/* Open Full View Button */}
         <TouchableOpacity style={styles.openButton} onPress={openInBrowser}>
-          <FontAwesome name="external-link" size={16} color={colors.text.primary} />
+          <FontAwesome name="external-link" size={16} color={colors.bg.primary} />
           <Text style={styles.openButtonText}>Open Full Visualizer</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -312,7 +313,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: spacing.md,
-    paddingBottom: spacing.xl,
+    paddingBottom: 100,
   },
   projectHeader: {
     flexDirection: 'row',
@@ -410,7 +411,7 @@ const styles = StyleSheet.create({
   openButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: colors.text.primary,
+    color: colors.bg.primary,
   },
   emptyState: {
     flex: 1,

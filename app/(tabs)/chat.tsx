@@ -15,13 +15,19 @@ import {
   Animated,
   Alert,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 import { colors, spacing, borderRadius } from '@/src/theme';
-import { useConnectionStore, useMobileChatStore } from '@/src/stores';
+import { useConnectionStore, useMobileChatStore, useProjectStore } from '@/src/stores';
 import { sendMobileChatMessage, MobileChatChunk } from '@/src/api/client';
-import type { AIProvider, AIModel, ModelInfo, ToolCall } from '@/src/types';
+import { BlueprintGrid } from '@/src/components/BlueprintGrid';
+import { GlassButton } from '@/src/components/GlassButton';
+import { ToolCallBlock } from '@/src/components/ToolCallBlock';
+import { MarkdownRenderer } from '@/src/components/MarkdownRenderer';
+import type { AIProvider, AIModel, AIMode, ModelInfo, ToolCall } from '@/src/types';
+import { PROVIDER_MODES } from '@/src/types';
 import type { MobileChatSession, MobileChatMessage } from '@/src/stores/mobileChatStore';
 
 // Provider colors
@@ -79,16 +85,21 @@ export default function ChatScreen() {
   if (!connection.device) {
     return (
       <View style={styles.container}>
-        <View style={styles.emptyState}>
-          <View style={styles.iconContainer}>
-            <Image source={require('@/assets/images/icon.png')} style={styles.logoImage} />
+        <BlueprintGrid>
+          <View style={styles.emptyState}>
+            <View style={styles.iconContainer}>
+              <Image source={require('@/assets/images/icon.png')} style={styles.logoImage} />
+            </View>
+            <Text style={styles.emptyTitle}>Not Connected</Text>
+            <Text style={styles.emptyText}>Connect to your desktop to start chatting with AI.</Text>
+            <GlassButton
+              onPress={() => router.push('/modal')}
+              label="Connect to Desktop"
+              icon="qrcode"
+              size="large"
+            />
           </View>
-          <Text style={styles.emptyTitle}>Not Connected</Text>
-          <Text style={styles.emptyText}>Connect to your desktop to start chatting with AI.</Text>
-          <TouchableOpacity style={styles.button} onPress={() => router.push('/modal')}>
-            <Text style={styles.buttonText}>Connect to Desktop</Text>
-          </TouchableOpacity>
-        </View>
+        </BlueprintGrid>
       </View>
     );
   }
@@ -100,17 +111,22 @@ export default function ChatScreen() {
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Mobile Chats</Text>
         </View>
-        <View style={styles.emptyState}>
-          <View style={styles.iconContainer}>
-            <FontAwesome name="exclamation-triangle" size={48} color={colors.accent.red} />
+        <BlueprintGrid>
+          <View style={styles.emptyState}>
+            <View style={styles.iconContainerError}>
+              <FontAwesome name="exclamation-triangle" size={48} color={colors.accent.red} />
+            </View>
+            <Text style={styles.emptyTitle}>Failed to Load</Text>
+            <Text style={styles.emptyText}>{error}</Text>
+            <GlassButton
+              onPress={() => router.push('/modal')}
+              label="Check Connection"
+              icon="link"
+              variant="danger"
+              size="large"
+            />
           </View>
-          <Text style={styles.emptyTitle}>Failed to Load</Text>
-          <Text style={styles.emptyText}>{error}</Text>
-          <TouchableOpacity style={styles.button} onPress={() => router.push('/modal')}>
-            <FontAwesome name="link" size={16} color={colors.bg.primary} />
-            <Text style={styles.buttonText}>Check Connection</Text>
-          </TouchableOpacity>
-        </View>
+        </BlueprintGrid>
       </View>
     );
   }
@@ -265,6 +281,7 @@ function NewChatModal({
   const [selectedProvider, setSelectedProvider] = useState<AIProvider>(DEFAULT_PROVIDER);
   const [selectedModel, setSelectedModel] = useState<AIModel>(DEFAULT_MODEL);
   const { createSession, selectSession } = useMobileChatStore();
+  const selectedProject = useProjectStore((s) => s.selectedProject);
 
   const filteredModels = useMemo(
     () => MODELS.filter((m) => m.provider === selectedProvider),
@@ -281,7 +298,8 @@ function NewChatModal({
 
   const handleCreate = async () => {
     const name = chatName.trim() || `Chat ${new Date().toLocaleDateString()}`;
-    const session = await createSession(name, selectedProvider, selectedModel);
+    const projectPath = selectedProject?.path;
+    const session = await createSession(name, selectedProvider, selectedModel, 'normal', projectPath);
     selectSession(session.id);
     setChatName('');
     onClose();
@@ -394,16 +412,40 @@ function MobileChatView({
   const [showModelSelector, setShowModelSelector] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
+  const insets = useSafeAreaInsets();
 
   const {
     getSessionMessages,
     addMessage,
     updateSession,
+    deleteSession,
+    selectSession,
     streamingState,
     startStreaming,
     appendStreamContent,
+    startToolCall,
+    completeToolCall,
     endStreaming,
   } = useMobileChatStore();
+
+  const handleDeleteChat = () => {
+    Alert.alert(
+      'Delete Chat',
+      `Are you sure you want to delete "${session.name}"? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteSession(session.id);
+            selectSession(null);
+            onBack();
+          },
+        },
+      ]
+    );
+  };
 
   const messages = getSessionMessages(session.id);
   const isStreaming = streamingState?.sessionId === session.id && streamingState?.isStreaming;
@@ -456,12 +498,37 @@ function MobileChatView({
         {
           provider: session.provider,
           model: session.model,
+          mode: session.mode || 'normal',
           message: content,
+          cwd: session.projectPath,
           history,
         },
         (chunk: MobileChatChunk) => {
           if (chunk.type === 'content' && chunk.content) {
             appendStreamContent(chunk.content);
+          } else if (chunk.type === 'tool_start') {
+            // Start a new tool call
+            const toolId = chunk.tool_id || `tool-${Date.now()}`;
+            startToolCall({
+              id: toolId,
+              name: chunk.tool_name || 'unknown',
+              status: 'running',
+              input: chunk.tool_input,
+              startedAt: Date.now(),
+            });
+          } else if (chunk.type === 'tool_result') {
+            // Complete the tool call
+            const toolId = chunk.tool_id || '';
+            completeToolCall(toolId, chunk.tool_output, chunk.tool_is_error);
+          } else if (chunk.type === 'tool_error') {
+            // Tool errored
+            const toolId = chunk.tool_id || '';
+            completeToolCall(toolId, chunk.error || chunk.tool_output, true);
+          } else if (chunk.type === 'thinking') {
+            // Append thinking content (could be styled differently if needed)
+            if (chunk.content) {
+              appendStreamContent(chunk.content);
+            }
           } else if (chunk.type === 'done') {
             endStreaming();
           } else if (chunk.type === 'error') {
@@ -479,10 +546,13 @@ function MobileChatView({
     }
   };
 
-  const handleModelChange = async (newProvider: AIProvider, newModel: AIModel) => {
-    await updateSession(session.id, { provider: newProvider, model: newModel });
+  const handleModelChange = async (newProvider: AIProvider, newModel: AIModel, newMode: AIMode) => {
+    await updateSession(session.id, { provider: newProvider, model: newModel, mode: newMode });
     setShowModelSelector(false);
   };
+
+  const mode = session.mode || 'normal';
+  const modeLabel = PROVIDER_MODES[provider]?.find(m => m.id === mode)?.name || 'Normal';
 
   return (
     <KeyboardAvoidingView
@@ -497,16 +567,28 @@ function MobileChatView({
             <FontAwesome name="chevron-left" size={16} color={colors.accent.blue} />
             <Text style={styles.backText}>Chats</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.providerButton, { borderColor: providerColor + '50' }]}
-            onPress={() => setShowModelSelector(true)}
-          >
-            <ProviderIcon provider={provider} size={14} />
-            <Text style={[styles.providerButtonText, { color: providerColor }]}>
-              {getModelName(session.model)}
-            </Text>
-            <FontAwesome name="chevron-down" size={10} color={providerColor} />
-          </TouchableOpacity>
+          <View style={styles.chatHeaderActions}>
+            <TouchableOpacity
+              style={[styles.providerButton, { borderColor: providerColor + '50' }]}
+              onPress={() => setShowModelSelector(true)}
+            >
+              <ProviderIcon provider={provider} size={14} />
+              <Text style={[styles.providerButtonText, { color: providerColor }]}>
+                {getModelName(session.model)}
+              </Text>
+              {mode !== 'normal' && (
+                <View style={[styles.modeBadge, { backgroundColor: mode === 'auto' ? colors.accent.green + '30' : colors.accent.yellow + '30' }]}>
+                  <Text style={[styles.modeBadgeText, { color: mode === 'auto' ? colors.accent.green : colors.accent.yellow }]}>
+                    {modeLabel}
+                  </Text>
+                </View>
+              )}
+              <FontAwesome name="chevron-down" size={10} color={providerColor} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleDeleteChat} style={styles.deleteButton}>
+              <FontAwesome name="trash-o" size={18} color={colors.accent.red} />
+            </TouchableOpacity>
+          </View>
         </View>
         <View style={styles.chatHeaderInfo}>
           <Text style={styles.chatTitle} numberOfLines={1}>{session.name}</Text>
@@ -543,6 +625,7 @@ function MobileChatView({
           <StreamingMessage
             content={streamingState.content}
             currentTool={streamingState.currentTool}
+            toolCalls={streamingState.toolCalls}
             providerColor={providerColor}
           />
         )}
@@ -556,7 +639,7 @@ function MobileChatView({
       </ScrollView>
 
       {/* Input */}
-      <View style={styles.inputContainer}>
+      <View style={[styles.inputContainer, { paddingBottom: spacing.md + insets.bottom + 60 }]}>
         <TextInput
           style={styles.input}
           value={inputText}
@@ -585,6 +668,7 @@ function MobileChatView({
         onClose={() => setShowModelSelector(false)}
         currentProvider={provider}
         currentModel={session.model}
+        currentMode={mode}
         onSelect={handleModelChange}
       />
     </KeyboardAvoidingView>
@@ -595,33 +679,66 @@ function MobileChatView({
 function StreamingMessage({
   content,
   currentTool,
+  toolCalls,
   providerColor,
 }: {
   content: string;
-  currentTool?: string;
+  currentTool?: ToolCall;
+  toolCalls?: ToolCall[];
   providerColor: string;
 }) {
+  const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
+
+  const toggleTool = (toolId: string) => {
+    setExpandedTools((prev) => {
+      const next = new Set(prev);
+      if (next.has(toolId)) {
+        next.delete(toolId);
+      } else {
+        next.add(toolId);
+      }
+      return next;
+    });
+  };
+
   return (
     <View style={styles.messageContainer}>
       <View style={styles.assistantBubble}>
+        {/* Render content with markdown */}
         {content ? (
-          <Text style={styles.messageText}>{content}</Text>
+          <MarkdownRenderer content={content} isStreaming />
         ) : currentTool ? (
           <View style={styles.inlineToolUse}>
             <View style={[styles.inlineToolIcon, { backgroundColor: colors.accent.cyan + '20' }]}>
               <FontAwesome name="cog" size={12} color={colors.accent.cyan} />
             </View>
-            <Text style={styles.inlineToolText}>Using {currentTool}...</Text>
+            <Text style={styles.inlineToolText}>Using {currentTool.name}...</Text>
           </View>
         ) : (
           <PulsingDots />
         )}
+
+        {/* Show completed tool calls */}
+        {toolCalls && toolCalls.length > 0 && (
+          <View style={styles.toolCallsContainer}>
+            {toolCalls.map((tool) => (
+              <ToolCallBlock
+                key={tool.id}
+                tool={tool}
+                isExpanded={expandedTools.has(tool.id)}
+                onToggle={() => toggleTool(tool.id)}
+              />
+            ))}
+          </View>
+        )}
+
+        {/* Show current running tool */}
         {content && currentTool && (
           <View style={[styles.inlineToolUse, { marginTop: spacing.sm }]}>
             <View style={[styles.inlineToolIcon, { backgroundColor: colors.accent.cyan + '20' }]}>
               <FontAwesome name="cog" size={12} color={colors.accent.cyan} />
             </View>
-            <Text style={styles.inlineToolText}>Using {currentTool}...</Text>
+            <Text style={styles.inlineToolText}>Using {currentTool.name}...</Text>
           </View>
         )}
       </View>
@@ -681,21 +798,43 @@ function MessageBubble({
 }) {
   const isUser = message.role === 'user';
   const isStreaming = message.isStreaming;
+  const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
+
+  const toggleTool = (toolId: string) => {
+    setExpandedTools((prev) => {
+      const next = new Set(prev);
+      if (next.has(toolId)) {
+        next.delete(toolId);
+      } else {
+        next.add(toolId);
+      }
+      return next;
+    });
+  };
 
   return (
     <View style={styles.messageContainer}>
       <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
         {message.content ? (
-          <Text style={[styles.messageText, isUser && styles.userText]}>{message.content}</Text>
+          isUser ? (
+            <Text style={[styles.messageText, styles.userText]}>{message.content}</Text>
+          ) : (
+            <MarkdownRenderer content={message.content} isStreaming={isStreaming} />
+          )
         ) : isStreaming ? (
           <PulsingDots />
         ) : null}
 
-        {/* Inline Tool Calls */}
+        {/* Tool Calls with expandable details */}
         {message.toolCalls && message.toolCalls.length > 0 && (
-          <View style={styles.inlineToolCalls}>
+          <View style={styles.toolCallsContainer}>
             {message.toolCalls.map((toolCall) => (
-              <InlineToolCall key={toolCall.id} toolCall={toolCall} />
+              <ToolCallBlock
+                key={toolCall.id}
+                tool={toolCall}
+                isExpanded={expandedTools.has(toolCall.id)}
+                onToggle={() => toggleTool(toolCall.id)}
+              />
             ))}
           </View>
         )}
@@ -758,26 +897,51 @@ function ModelSelectorModal({
   onClose,
   currentProvider,
   currentModel,
+  currentMode,
   onSelect,
 }: {
   visible: boolean;
   onClose: () => void;
   currentProvider: AIProvider;
   currentModel?: AIModel;
-  onSelect: (provider: AIProvider, model: AIModel) => void;
+  currentMode?: AIMode;
+  onSelect: (provider: AIProvider, model: AIModel, mode: AIMode) => void;
 }) {
   const [selectedProvider, setSelectedProvider] = useState<AIProvider>(currentProvider);
+  const [selectedModel, setSelectedModel] = useState<AIModel | undefined>(currentModel);
+  const [selectedMode, setSelectedMode] = useState<AIMode>(currentMode || 'normal');
+
+  // Reset selections when provider changes
+  useEffect(() => {
+    const models = MODELS.filter((m) => m.provider === selectedProvider);
+    if (models.length > 0 && !models.find(m => m.id === selectedModel)) {
+      setSelectedModel(models[0].id);
+    }
+    // Reset mode if not available for new provider
+    const modes = PROVIDER_MODES[selectedProvider];
+    if (!modes.find(m => m.id === selectedMode)) {
+      setSelectedMode('normal');
+    }
+  }, [selectedProvider]);
 
   const filteredModels = useMemo(
     () => MODELS.filter((m) => m.provider === selectedProvider),
     [selectedProvider]
   );
 
+  const availableModes = PROVIDER_MODES[selectedProvider] || [];
+
   const providers: { id: AIProvider; name: string }[] = [
     { id: 'claude', name: 'Claude' },
     { id: 'openai', name: 'OpenAI' },
     { id: 'gemini', name: 'Gemini' },
   ];
+
+  const handleApply = () => {
+    if (selectedModel) {
+      onSelect(selectedProvider, selectedModel, selectedMode);
+    }
+  };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -817,6 +981,30 @@ function ModelSelectorModal({
             ))}
           </View>
 
+          {/* Mode selector */}
+          <View style={styles.inputSection}>
+            <Text style={styles.inputLabel}>Mode</Text>
+            <View style={styles.modeSelector}>
+              {availableModes.map((modeOption) => (
+                <TouchableOpacity
+                  key={modeOption.id}
+                  style={[
+                    styles.modeOption,
+                    selectedMode === modeOption.id && styles.modeOptionSelected,
+                  ]}
+                  onPress={() => setSelectedMode(modeOption.id)}
+                >
+                  <Text style={[
+                    styles.modeOptionText,
+                    selectedMode === modeOption.id && styles.modeOptionTextSelected,
+                  ]}>
+                    {modeOption.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
           {/* Model list */}
           <ScrollView style={styles.modelList}>
             {filteredModels.map((model) => (
@@ -824,20 +1012,26 @@ function ModelSelectorModal({
                 key={model.id}
                 style={[
                   styles.modelOption,
-                  currentModel === model.id && styles.modelOptionSelected,
+                  selectedModel === model.id && styles.modelOptionSelected,
                 ]}
-                onPress={() => onSelect(model.provider, model.id)}
+                onPress={() => setSelectedModel(model.id)}
               >
                 <View style={styles.modelOptionInfo}>
                   <Text style={styles.modelOptionName}>{model.name}</Text>
                   <Text style={styles.modelOptionDesc}>{model.description}</Text>
                 </View>
-                {currentModel === model.id && (
+                {selectedModel === model.id && (
                   <FontAwesome name="check" size={16} color={colors.accent.green} />
                 )}
               </TouchableOpacity>
             ))}
           </ScrollView>
+
+          {/* Apply button */}
+          <TouchableOpacity style={styles.createButton} onPress={handleApply}>
+            <FontAwesome name="check" size={14} color={colors.bg.primary} />
+            <Text style={styles.createButtonText}>Apply Changes</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -903,6 +1097,7 @@ const styles = StyleSheet.create({
   },
   sessionListContent: {
     padding: spacing.md,
+    paddingBottom: 100,
   },
   emptyList: {
     alignItems: 'center',
@@ -1032,6 +1227,50 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
   },
+  chatHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  deleteButton: {
+    padding: spacing.sm,
+  },
+  modeBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: borderRadius.full,
+    marginLeft: spacing.xs,
+  },
+  modeBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  modeSelector: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  modeOption: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.bg.secondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+  },
+  modeOptionSelected: {
+    backgroundColor: colors.accent.purple + '15',
+    borderColor: colors.accent.purple + '30',
+  },
+  modeOptionText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.text.secondary,
+  },
+  modeOptionTextSelected: {
+    color: colors.accent.purple,
+  },
   chatHeaderInfo: {
     gap: 2,
   },
@@ -1049,7 +1288,7 @@ const styles = StyleSheet.create({
   },
   messageListContent: {
     padding: spacing.md,
-    paddingBottom: spacing.lg,
+    paddingBottom: 100,
   },
   emptyChat: {
     alignItems: 'center',
@@ -1107,6 +1346,10 @@ const styles = StyleSheet.create({
   inlineToolCalls: {
     marginTop: spacing.md,
     gap: spacing.sm,
+  },
+  toolCallsContainer: {
+    marginTop: spacing.md,
+    gap: spacing.xs,
   },
   inlineToolCard: {
     backgroundColor: colors.bg.secondary,
@@ -1193,8 +1436,10 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     fontSize: 15,
     color: colors.text.primary,
-    maxHeight: 100,
-    minHeight: 44,
+    maxHeight: 120,
+    minHeight: 56,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   sendButton: {
     width: 44,
@@ -1325,9 +1570,7 @@ const styles = StyleSheet.create({
   },
   // Empty state
   emptyState: {
-    flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
     padding: spacing.xl,
   },
   iconContainer: {
@@ -1339,6 +1582,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: spacing.xl,
     overflow: 'hidden',
+  },
+  iconContainerError: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: colors.accent.red + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.xl,
   },
   logoImage: {
     width: 64,

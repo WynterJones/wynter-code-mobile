@@ -15,6 +15,8 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { colors, spacing, borderRadius } from '@/src/theme';
 import { useConnectionStore, useProjectStore } from '@/src/stores';
 import { useWorkspaces } from '@/src/api/hooks';
+import { BlueprintGrid } from '@/src/components/BlueprintGrid';
+import { GlassButton } from '@/src/components/GlassButton';
 import type { Workspace, Project } from '@/src/types';
 
 export default function ProjectsScreen() {
@@ -23,7 +25,7 @@ export default function ProjectsScreen() {
   const { selectedProject, setWorkspaces, selectProject } = useProjectStore();
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(new Set());
 
-  // React Query hook for fetching workspaces
+  // React Query hook for fetching workspaces (already deduplicated in hook)
   const {
     data: workspaces = [],
     isLoading,
@@ -74,22 +76,26 @@ export default function ProjectsScreen() {
   if (!connection.device) {
     return (
       <View style={styles.container}>
-        <View style={styles.emptyState}>
-          <View style={styles.iconContainer}>
-            <Image
-              source={require('@/assets/images/icon.png')}
-              style={styles.logoImage}
+        <BlueprintGrid>
+          <View style={styles.emptyState}>
+            <View style={styles.iconContainer}>
+              <Image
+                source={require('@/assets/images/icon.png')}
+                style={styles.logoImage}
+              />
+            </View>
+            <Text style={styles.emptyTitle}>Not Connected</Text>
+            <Text style={styles.emptyText}>
+              Connect to your wynter-code desktop to view and manage your projects.
+            </Text>
+            <GlassButton
+              onPress={() => router.push('/modal')}
+              label="Connect to Desktop"
+              icon="qrcode"
+              size="large"
             />
           </View>
-          <Text style={styles.emptyTitle}>Not Connected</Text>
-          <Text style={styles.emptyText}>
-            Connect to your wynter-code desktop to view and manage your projects.
-          </Text>
-          <TouchableOpacity style={styles.connectButton} onPress={() => router.push('/modal')}>
-            <FontAwesome name="qrcode" size={18} color={colors.bg.primary} />
-            <Text style={styles.connectButtonText}>Connect to Desktop</Text>
-          </TouchableOpacity>
-        </View>
+        </BlueprintGrid>
       </View>
     );
   }
@@ -102,23 +108,28 @@ export default function ProjectsScreen() {
           <View style={styles.headerTop}>
             <TouchableOpacity style={styles.connectionBadge} onPress={() => router.push('/modal')}>
               <View style={styles.connectionDot} />
-              <Text style={styles.connectionText}>{connection.device.name}</Text>
+              <Text style={styles.connectionText}>Connection</Text>
             </TouchableOpacity>
           </View>
         </View>
-        <View style={styles.emptyState}>
-          <View style={styles.iconContainer}>
-            <FontAwesome name="exclamation-triangle" size={48} color={colors.accent.red} />
+        <BlueprintGrid>
+          <View style={styles.emptyState}>
+            <View style={styles.iconContainerError}>
+              <FontAwesome name="exclamation-triangle" size={48} color={colors.accent.red} />
+            </View>
+            <Text style={styles.emptyTitle}>Failed to Load</Text>
+            <Text style={styles.emptyText}>
+              {error instanceof Error ? error.message : 'Unable to fetch workspaces'}
+            </Text>
+            <GlassButton
+              onPress={() => router.push('/modal')}
+              label="Check Connection"
+              icon="link"
+              variant="danger"
+              size="large"
+            />
           </View>
-          <Text style={styles.emptyTitle}>Failed to Load</Text>
-          <Text style={styles.emptyText}>
-            {error instanceof Error ? error.message : 'Unable to fetch workspaces'}
-          </Text>
-          <TouchableOpacity style={styles.connectButton} onPress={() => router.push('/modal')}>
-            <FontAwesome name="link" size={18} color={colors.bg.primary} />
-            <Text style={styles.connectButtonText}>Check Connection</Text>
-          </TouchableOpacity>
-        </View>
+        </BlueprintGrid>
       </View>
     );
   }
@@ -130,12 +141,12 @@ export default function ProjectsScreen() {
         <View style={styles.headerTop}>
           <TouchableOpacity style={styles.connectionBadge} onPress={() => router.push('/modal')}>
             <View style={styles.connectionDot} />
-            <Text style={styles.connectionText}>{connection.device.name}</Text>
+            <Text style={styles.connectionText}>Connection</Text>
           </TouchableOpacity>
         </View>
 
         {/* Selected Project Banner */}
-        {selectedProject && (
+        {selectedProject ? (
           <TouchableOpacity
             style={styles.selectedBanner}
             onPress={() => selectProject(null)}
@@ -149,7 +160,12 @@ export default function ProjectsScreen() {
             </View>
             <FontAwesome name="times-circle" size={18} color={colors.text.muted} />
           </TouchableOpacity>
-        )}
+        ) : workspaces.length > 0 ? (
+          <View style={styles.selectBanner}>
+            <FontAwesome name="hand-pointer-o" size={16} color={colors.accent.orange} />
+            <Text style={styles.selectBannerText}>Select a project to continue</Text>
+          </View>
+        ) : null}
       </View>
 
       {/* Content */}
@@ -328,6 +344,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderRadius: borderRadius.full,
     gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   connectionDot: {
     width: 8,
@@ -374,12 +392,28 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     fontWeight: '600',
   },
+  selectBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.accent.orange + '15',
+    padding: spacing.md,
+    borderRadius: borderRadius.lg,
+    marginTop: spacing.md,
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.accent.orange + '30',
+  },
+  selectBannerText: {
+    fontSize: 14,
+    color: colors.accent.orange,
+    fontWeight: '500',
+  },
   scrollView: {
     flex: 1,
   },
   content: {
     padding: spacing.lg,
-    paddingBottom: spacing.xxl,
+    paddingBottom: 100,
   },
   loadingContainer: {
     flex: 1,
@@ -514,9 +548,7 @@ const styles = StyleSheet.create({
     color: colors.text.muted,
   },
   emptyState: {
-    flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
     padding: spacing.xl,
   },
   iconContainer: {
@@ -528,6 +560,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: spacing.xl,
     overflow: 'hidden',
+  },
+  iconContainerError: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: colors.accent.red + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.xl,
   },
   logoImage: {
     width: 64,

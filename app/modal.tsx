@@ -27,7 +27,7 @@ export default function ConnectModal() {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [manualCode, setManualCode] = useState('');
-  const [manualHost, setManualHost] = useState('');
+  const [manualHost, setManualHost] = useState(__DEV__ ? '192.168.2.252' : '');
   const [manualPort, setManualPort] = useState('8765');
   const [isConnecting, setIsConnecting] = useState(false);
 

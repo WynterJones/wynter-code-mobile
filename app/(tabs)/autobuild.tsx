@@ -653,7 +653,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: spacing.lg,
-    paddingBottom: spacing.xxl,
+    paddingBottom: 100,
   },
   statusHeader: {
     backgroundColor: colors.bg.card,
@@ -992,9 +992,7 @@ const styles = StyleSheet.create({
   },
   // Empty state styles
   emptyState: {
-    flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
     padding: spacing.xl,
   },
   iconContainer: {

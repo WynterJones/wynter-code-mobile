@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   TouchableOpacity,
   Pressable,
   ScrollView,
+  ActivityIndicator,
+  Image,
 } from 'react-native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useRouter } from 'expo-router';
@@ -15,28 +17,94 @@ import Animated, {
   FadeIn,
   FadeOut,
 } from 'react-native-reanimated';
+import { useQuery } from '@tanstack/react-query';
 
 import { colors, spacing, borderRadius } from '@/src/theme';
-import { useConnectionStore } from '@/src/stores';
+import { useConnectionStore, useProjectStore } from '@/src/stores';
+import { checkFarmworkInstalled, queryKeys } from '@/src/api/client';
 
 interface MenuItem {
   name: string;
   icon: keyof typeof FontAwesome.glyphMap;
   route: string;
   color?: string;
+  subtitle?: string;
+  disabled?: boolean;
+  loading?: boolean;
 }
 
-const menuItems: MenuItem[] = [
-  { name: 'Farmwork', icon: 'leaf', route: '/farmwork', color: colors.accent.green },
-  { name: 'Overwatch', icon: 'eye', route: '/overwatch', color: colors.accent.purple },
-  { name: 'Subscriptions', icon: 'credit-card', route: '/subscriptions', color: colors.accent.blue },
-  { name: 'Bookmarks', icon: 'bookmark', route: '/bookmarks', color: colors.accent.yellow },
-];
+interface MenuSection {
+  title: string;
+  items: MenuItem[];
+}
 
 export default function MenuScreen() {
   const router = useRouter();
   const { connection } = useConnectionStore();
+  const selectedProject = useProjectStore((s) => s.selectedProject);
   const isConnected = connection.status === 'connected';
+
+  // Check if farmwork is installed for the selected project
+  const { data: farmworkStatus, isLoading: farmworkLoading } = useQuery({
+    queryKey: queryKeys.farmworkCheck(selectedProject?.path || ''),
+    queryFn: () => checkFarmworkInstalled(selectedProject!.path),
+    enabled: isConnected && !!selectedProject?.path,
+    staleTime: 60000,
+  });
+
+  // Build menu sections with dynamic farmwork item
+  const menuSections = useMemo((): MenuSection[] => {
+    const farmworkItem: MenuItem = farmworkStatus?.installed
+      ? {
+          name: 'Farmwork',
+          icon: 'leaf',
+          route: '/farmwork',
+          color: colors.accent.green,
+        }
+      : {
+          name: 'Install Farmwork',
+          icon: 'leaf',
+          route: '/farmwork-install',
+          color: colors.accent.green,
+          subtitle: selectedProject ? 'Set up for this project' : 'Select a project first',
+          disabled: !selectedProject,
+          loading: farmworkLoading,
+        };
+
+    return [
+      {
+        title: 'Manage',
+        items: [
+          { name: 'New Project', icon: 'plus-circle', route: '/new-project', color: colors.accent.green },
+          { name: 'Workspaces', icon: 'th-large', route: '/workspace-board', color: colors.accent.purple },
+          { name: 'The Board', icon: 'columns', route: '/board', color: colors.accent.cyan },
+          { name: 'Docs', icon: 'file-text-o', route: '/docs', color: colors.text.muted },
+          farmworkItem,
+        ],
+      },
+      {
+        title: 'Tools',
+        items: [
+          { name: 'Live Preview', icon: 'play-circle', route: '/live-preview', color: colors.accent.cyan },
+          { name: 'Netlify Deploy', icon: 'cloud-upload', route: '/netlify-deploy', color: colors.accent.blue },
+        ],
+      },
+      {
+        title: 'Observe',
+        items: [
+          { name: 'Overwatch', icon: 'eye', route: '/overwatch', color: colors.accent.purple },
+          { name: 'Subscriptions', icon: 'credit-card', route: '/subscriptions', color: colors.accent.orange },
+          { name: 'Bookmarks', icon: 'bookmark', route: '/bookmarks', color: colors.accent.yellow },
+        ],
+      },
+      {
+        title: '',
+        items: [
+          { name: 'About', icon: 'info-circle', route: '/about', color: colors.text.muted },
+        ],
+      },
+    ];
+  }, [farmworkStatus, selectedProject, farmworkLoading]);
 
   const handleClose = () => {
     router.back();
@@ -69,7 +137,11 @@ export default function MenuScreen() {
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.logoContainer}>
-            <FontAwesome name="code" size={28} color={colors.accent.purple} />
+            <Image
+              source={require('../assets/images/icon.png')}
+              style={styles.logoImage}
+              resizeMode="contain"
+            />
           </View>
           <View style={styles.headerText}>
             <Text style={styles.title}>Wynter Code</Text>
@@ -93,27 +165,43 @@ export default function MenuScreen() {
         {/* Divider */}
         <View style={styles.divider} />
 
-        {/* Section Title */}
-        <Text style={styles.sectionTitle}>Tools</Text>
-
-        {/* Menu Items */}
+        {/* Menu Sections */}
         <ScrollView style={styles.menuList} showsVerticalScrollIndicator={false}>
-          {menuItems.map((item) => (
-            <TouchableOpacity
-              key={item.route}
-              style={styles.menuItem}
-              onPress={() => handleNavigate(item.route)}
-            >
-              <View style={[styles.iconContainer, { backgroundColor: (item.color || colors.accent.purple) + '20' }]}>
-                <FontAwesome
-                  name={item.icon}
-                  size={18}
-                  color={item.color || colors.accent.purple}
-                />
-              </View>
-              <Text style={styles.menuItemText}>{item.name}</Text>
-              <FontAwesome name="chevron-right" size={12} color={colors.text.muted} />
-            </TouchableOpacity>
+          {menuSections.map((section, sectionIndex) => (
+            <View key={section.title}>
+              <Text style={[styles.sectionTitle, sectionIndex > 0 && styles.sectionTitleSpaced]}>
+                {section.title}
+              </Text>
+              {section.items.map((item) => (
+                <TouchableOpacity
+                  key={item.route}
+                  style={[styles.menuItem, item.disabled && styles.menuItemDisabled]}
+                  onPress={() => !item.disabled && handleNavigate(item.route)}
+                  disabled={item.disabled}
+                >
+                  <View style={[styles.iconContainer, { backgroundColor: (item.color || colors.accent.purple) + '20' }]}>
+                    {item.loading ? (
+                      <ActivityIndicator size="small" color={item.color || colors.accent.purple} />
+                    ) : (
+                      <FontAwesome
+                        name={item.icon}
+                        size={18}
+                        color={item.disabled ? colors.text.muted : (item.color || colors.accent.purple)}
+                      />
+                    )}
+                  </View>
+                  <View style={styles.menuItemContent}>
+                    <Text style={[styles.menuItemText, item.disabled && styles.menuItemTextDisabled]}>
+                      {item.name}
+                    </Text>
+                    {item.subtitle && (
+                      <Text style={styles.menuItemSubtitle}>{item.subtitle}</Text>
+                    )}
+                  </View>
+                  <FontAwesome name="chevron-right" size={12} color={colors.text.muted} />
+                </TouchableOpacity>
+              ))}
+            </View>
           ))}
         </ScrollView>
 
@@ -155,6 +243,8 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: colors.bg.secondary,
     paddingTop: 60,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
   },
   header: {
     flexDirection: 'row',
@@ -169,6 +259,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.tertiary,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  logoImage: {
+    width: 40,
+    height: 40,
   },
   headerText: {
     flex: 1,
@@ -203,14 +298,17 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.lg,
   },
   sectionTitle: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: colors.text.muted,
     textTransform: 'uppercase',
     letterSpacing: 1,
     paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
+  },
+  sectionTitleSpaced: {
     paddingTop: spacing.lg,
-    paddingBottom: spacing.sm,
   },
   menuList: {
     flex: 1,
@@ -231,12 +329,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  menuItemText: {
+  menuItemContent: {
     flex: 1,
     marginLeft: spacing.md,
+  },
+  menuItemText: {
     fontSize: 15,
     fontWeight: '500',
     color: colors.text.primary,
+  },
+  menuItemTextDisabled: {
+    color: colors.text.muted,
+  },
+  menuItemSubtitle: {
+    fontSize: 11,
+    color: colors.text.muted,
+    marginTop: 2,
+  },
+  menuItemDisabled: {
+    opacity: 0.6,
   },
   footer: {
     borderTopWidth: 1,
@@ -251,6 +362,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     backgroundColor: colors.bg.tertiary,
     borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.accent.purple + '50',
   },
   footerButtonText: {
     marginLeft: spacing.md,

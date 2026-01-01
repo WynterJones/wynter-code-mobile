@@ -5,7 +5,7 @@
  */
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
-import type { AIProvider, AIModel, ToolCall } from '../types';
+import type { AIProvider, AIModel, AIMode, ToolCall } from '../types';
 
 // Mobile-specific types
 export interface MobileChatSession {
@@ -13,6 +13,8 @@ export interface MobileChatSession {
   name: string;
   provider: AIProvider;
   model: AIModel;
+  mode: AIMode;
+  projectPath?: string; // Working directory for CLI processes
   createdAt: string;
   updatedAt: string;
   messageCount: number;
@@ -33,7 +35,8 @@ interface StreamingState {
   messageId: string;
   content: string;
   isStreaming: boolean;
-  currentTool?: string;
+  currentTool?: ToolCall;
+  toolCalls: ToolCall[];
 }
 
 interface MobileChatStore {
@@ -59,7 +62,7 @@ interface MobileChatStore {
   saveMessages: (sessionId: string) => Promise<void>;
 
   // Session CRUD
-  createSession: (name: string, provider: AIProvider, model: AIModel) => Promise<MobileChatSession>;
+  createSession: (name: string, provider: AIProvider, model: AIModel, mode?: AIMode, projectPath?: string) => Promise<MobileChatSession>;
   updateSession: (sessionId: string, updates: Partial<MobileChatSession>) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
   selectSession: (sessionId: string | null) => void;
@@ -72,7 +75,9 @@ interface MobileChatStore {
   // Streaming
   startStreaming: (sessionId: string, messageId: string) => void;
   appendStreamContent: (content: string) => void;
-  setStreamingTool: (toolName?: string) => void;
+  startToolCall: (tool: ToolCall) => void;
+  updateCurrentToolCall: (updates: Partial<ToolCall>) => void;
+  completeToolCall: (toolId: string, output?: string, isError?: boolean) => void;
   endStreaming: () => void;
 
   // Tool calls
@@ -152,13 +157,15 @@ export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
   },
 
   // Session CRUD
-  createSession: async (name: string, provider: AIProvider, model: AIModel) => {
+  createSession: async (name: string, provider: AIProvider, model: AIModel, mode: AIMode = 'normal', projectPath?: string) => {
     const now = new Date().toISOString();
     const session: MobileChatSession = {
       id: `mobile-${Date.now()}-${Math.random().toString(36).substring(7)}`,
       name,
       provider,
       model,
+      mode,
+      projectPath,
       createdAt: now,
       updatedAt: now,
       messageCount: 0,
@@ -257,6 +264,7 @@ export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
         messageId,
         content: '',
         isStreaming: true,
+        toolCalls: [],
       },
     });
   },
@@ -278,15 +286,66 @@ export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
     });
   },
 
-  setStreamingTool: (toolName) => {
-    const { streamingState } = get();
+  startToolCall: (tool) => {
+    const { streamingState, updateMessage } = get();
     if (!streamingState) return;
+
+    const newToolCalls = [...streamingState.toolCalls, tool];
+    set({
+      streamingState: {
+        ...streamingState,
+        currentTool: tool,
+        toolCalls: newToolCalls,
+      },
+    });
+
+    updateMessage(streamingState.sessionId, streamingState.messageId, {
+      toolCalls: newToolCalls,
+    });
+  },
+
+  updateCurrentToolCall: (updates) => {
+    const { streamingState, updateMessage } = get();
+    if (!streamingState || !streamingState.currentTool) return;
+
+    const updatedTool = { ...streamingState.currentTool, ...updates };
+    const newToolCalls = streamingState.toolCalls.map((t) =>
+      t.id === updatedTool.id ? updatedTool : t
+    );
 
     set({
       streamingState: {
         ...streamingState,
-        currentTool: toolName,
+        currentTool: updatedTool,
+        toolCalls: newToolCalls,
       },
+    });
+
+    updateMessage(streamingState.sessionId, streamingState.messageId, {
+      toolCalls: newToolCalls,
+    });
+  },
+
+  completeToolCall: (toolId, output, isError) => {
+    const { streamingState, updateMessage } = get();
+    if (!streamingState) return;
+
+    const newToolCalls = streamingState.toolCalls.map((t) =>
+      t.id === toolId
+        ? { ...t, status: isError ? 'error' as const : 'completed' as const, output, isError, completedAt: Date.now() }
+        : t
+    );
+
+    set({
+      streamingState: {
+        ...streamingState,
+        currentTool: undefined,
+        toolCalls: newToolCalls,
+      },
+    });
+
+    updateMessage(streamingState.sessionId, streamingState.messageId, {
+      toolCalls: newToolCalls,
     });
   },
 
@@ -295,6 +354,7 @@ export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
     if (streamingState) {
       updateMessage(streamingState.sessionId, streamingState.messageId, {
         content: streamingState.content,
+        toolCalls: streamingState.toolCalls,
         isStreaming: false,
       });
       saveMessages(streamingState.sessionId);

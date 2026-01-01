@@ -21,6 +21,8 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { colors, spacing, borderRadius } from '@/src/theme';
 import { useProjectStore, useBeadsStore, useConnectionStore } from '@/src/stores';
 import { useIssues, useCreateIssue, useUpdateIssue, useCloseIssue } from '@/src/api/hooks';
+import { BlueprintGrid } from '@/src/components/BlueprintGrid';
+import { GlassButton } from '@/src/components/GlassButton';
 import { haptics } from '@/src/lib';
 import type { Issue, IssueStatus, IssueType, Priority, CreateIssueInput } from '@/src/types';
 
@@ -83,21 +85,26 @@ export default function IssuesScreen() {
   if (!connection.device) {
     return (
       <View style={styles.container}>
-        <View style={styles.emptyState}>
-          <View style={styles.iconContainer}>
-            <Image
-              source={require('@/assets/images/icon.png')}
-              style={styles.logoImage}
+        <BlueprintGrid>
+          <View style={styles.emptyState}>
+            <View style={styles.iconContainer}>
+              <Image
+                source={require('@/assets/images/icon.png')}
+                style={styles.logoImage}
+              />
+            </View>
+            <Text style={styles.emptyTitle}>Not Connected</Text>
+            <Text style={styles.emptyText}>
+              Connect to your desktop to manage issues.
+            </Text>
+            <GlassButton
+              onPress={() => router.push('/modal')}
+              label="Connect to Desktop"
+              icon="qrcode"
+              size="large"
             />
           </View>
-          <Text style={styles.emptyTitle}>Not Connected</Text>
-          <Text style={styles.emptyText}>
-            Connect to your desktop to manage issues.
-          </Text>
-          <TouchableOpacity style={styles.button} onPress={() => router.push('/modal')}>
-            <Text style={styles.buttonText}>Connect to Desktop</Text>
-          </TouchableOpacity>
-        </View>
+        </BlueprintGrid>
       </View>
     );
   }
@@ -106,19 +113,24 @@ export default function IssuesScreen() {
   if (!selectedProject) {
     return (
       <View style={styles.container}>
-        <View style={styles.emptyState}>
-          <View style={styles.iconContainer}>
-            <FontAwesome name="folder-o" size={48} color={colors.text.muted} />
+        <BlueprintGrid>
+          <View style={styles.emptyState}>
+            <View style={styles.iconContainerMuted}>
+              <FontAwesome name="folder-o" size={48} color={colors.text.muted} />
+            </View>
+            <Text style={styles.emptyTitle}>No Project Selected</Text>
+            <Text style={styles.emptyText}>
+              Select a project from the Projects tab to view and manage its issues.
+            </Text>
+            <GlassButton
+              onPress={() => router.push('/')}
+              label="Go to Projects"
+              icon="folder"
+              variant="secondary"
+              size="large"
+            />
           </View>
-          <Text style={styles.emptyTitle}>No Project Selected</Text>
-          <Text style={styles.emptyText}>
-            Select a project from the Projects tab to view and manage its issues.
-          </Text>
-          <TouchableOpacity style={styles.button} onPress={() => router.push('/')}>
-            <FontAwesome name="folder" size={16} color={colors.bg.primary} />
-            <Text style={styles.buttonText}>Go to Projects</Text>
-          </TouchableOpacity>
-        </View>
+        </BlueprintGrid>
       </View>
     );
   }
@@ -151,19 +163,24 @@ export default function IssuesScreen() {
             <Text style={styles.projectName}>{selectedProject.name}</Text>
           </View>
         </View>
-        <View style={styles.emptyState}>
-          <View style={styles.iconContainer}>
-            <FontAwesome name="exclamation-triangle" size={48} color={colors.accent.red} />
+        <BlueprintGrid>
+          <View style={styles.emptyState}>
+            <View style={styles.iconContainerError}>
+              <FontAwesome name="exclamation-triangle" size={48} color={colors.accent.red} />
+            </View>
+            <Text style={styles.emptyTitle}>Failed to Load</Text>
+            <Text style={styles.emptyText}>
+              {error instanceof Error ? error.message : 'Unable to connect to desktop'}
+            </Text>
+            <GlassButton
+              onPress={() => router.push('/modal')}
+              label="Check Connection"
+              icon="link"
+              variant="danger"
+              size="large"
+            />
           </View>
-          <Text style={styles.emptyTitle}>Failed to Load</Text>
-          <Text style={styles.emptyText}>
-            {error instanceof Error ? error.message : 'Unable to connect to desktop'}
-          </Text>
-          <TouchableOpacity style={styles.button} onPress={() => router.push('/modal')}>
-            <FontAwesome name="link" size={16} color={colors.bg.primary} />
-            <Text style={styles.buttonText}>Check Connection</Text>
-          </TouchableOpacity>
-        </View>
+        </BlueprintGrid>
       </View>
     );
   }
@@ -492,7 +509,7 @@ function IssueDetailModal({
       return;
     }
     onCloseIssue(closeReason.trim());
-    setShowCloseDialog(false);
+    onClose();
   };
 
   return (
@@ -822,24 +839,27 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.secondary,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.md,
   },
   filterRow: {
     paddingHorizontal: spacing.md,
     gap: spacing.sm,
+    alignItems: 'center',
   },
   filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    height: 36,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
     borderRadius: borderRadius.full,
     backgroundColor: colors.bg.tertiary,
     gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   filterChipActive: {
     backgroundColor: colors.accent.purple + '20',
-    borderWidth: 1,
     borderColor: colors.accent.purple + '50',
   },
   filterChipText: {
@@ -861,12 +881,14 @@ const styles = StyleSheet.create({
   typeFilterRow: {
     paddingHorizontal: spacing.md,
     gap: spacing.xs,
+    alignItems: 'center',
   },
   typeChip: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    height: 28,
     paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
     borderRadius: borderRadius.sm,
     backgroundColor: colors.bg.tertiary,
     gap: 4,
@@ -1017,7 +1039,7 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: spacing.lg,
-    bottom: spacing.lg,
+    bottom: 100,
     width: 56,
     height: 56,
     borderRadius: 28,
@@ -1031,9 +1053,7 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   emptyState: {
-    flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
     padding: spacing.xl,
   },
   iconContainer: {
@@ -1045,6 +1065,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: spacing.xl,
     overflow: 'hidden',
+  },
+  iconContainerError: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: colors.accent.red + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.xl,
+  },
+  iconContainerMuted: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: colors.bg.secondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.xl,
   },
   logoImage: {
     width: 64,

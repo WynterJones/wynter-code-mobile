@@ -43,6 +43,18 @@ export interface AutoBuildUpdate {
       status: string;
       created_at: string;
     }>;
+    human_review?: Array<{
+      id: string;
+      title: string;
+      status: string;
+      created_at: string;
+    }>;
+    completed?: Array<{
+      id: string;
+      title: string;
+      status: string;
+      created_at: string;
+    }>;
     logs: Array<{
       id: string;
       level: 'info' | 'success' | 'warn' | 'error' | 'claude';
@@ -79,7 +91,65 @@ export interface AutoBuildAddToQueueUpdate {
   issue_id: string;
 }
 
-export type StateUpdate = BeadsUpdate | AutoBuildUpdate | ChatStreamUpdate | ToolCallUpdate | AutoBuildAddToQueueUpdate;
+export interface TerminalOutputUpdate {
+  type: 'TerminalOutput';
+  pty_id: string;
+  data: string;
+}
+
+export interface WorkspaceUpdate {
+  type: 'WorkspaceUpdate';
+  action: 'created' | 'updated' | 'deleted';
+  workspace?: {
+    id: string;
+    name: string;
+    color: string;
+    project_ids: string[];
+  };
+  workspace_id?: string;
+}
+
+export interface ProjectUpdate {
+  type: 'ProjectUpdate';
+  action: 'created' | 'updated' | 'deleted';
+  project?: {
+    id: string;
+    name: string;
+    path: string;
+    color?: string;
+  };
+  project_id?: string;
+  workspace_id?: string;
+}
+
+export interface KanbanUpdate {
+  type: 'KanbanUpdate';
+  workspace_id: string;
+  action: 'created' | 'updated' | 'deleted' | 'moved';
+  task?: {
+    id: string;
+    title: string;
+    description?: string;
+    status: string;
+    priority: number;
+    created_at: number;
+    updated_at: number;
+    order: number;
+    locked: boolean;
+  };
+  task_id?: string;
+}
+
+export type StateUpdate =
+  | BeadsUpdate
+  | AutoBuildUpdate
+  | ChatStreamUpdate
+  | ToolCallUpdate
+  | AutoBuildAddToQueueUpdate
+  | TerminalOutputUpdate
+  | WorkspaceUpdate
+  | ProjectUpdate
+  | KanbanUpdate;
 
 type UpdateHandler = (update: StateUpdate) => void;
 

@@ -84,6 +84,7 @@ export default function RootLayout() {
               title: 'Farmwork',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
+              headerBackTitle: 'Home',
             }}
           />
           <Stack.Screen
@@ -92,6 +93,7 @@ export default function RootLayout() {
               title: 'Overwatch',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
+              headerBackTitle: 'Home',
             }}
           />
           <Stack.Screen
@@ -100,6 +102,7 @@ export default function RootLayout() {
               title: 'Subscriptions',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
+              headerBackTitle: 'Home',
             }}
           />
           <Stack.Screen
@@ -108,6 +111,70 @@ export default function RootLayout() {
               title: 'Bookmarks',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
+              headerBackTitle: 'Home',
+            }}
+          />
+          <Stack.Screen
+            name="workspace-board"
+            options={{
+              title: 'Manage Workspaces',
+              headerStyle: { backgroundColor: colors.bg.secondary },
+              headerTintColor: colors.text.primary,
+              headerBackTitle: 'Home',
+            }}
+          />
+          <Stack.Screen
+            name="netlify-deploy"
+            options={{
+              title: 'Deploy to Netlify',
+              headerStyle: { backgroundColor: colors.bg.secondary },
+              headerTintColor: colors.text.primary,
+              headerBackTitle: 'Home',
+            }}
+          />
+          <Stack.Screen
+            name="docs"
+            options={{
+              title: 'Documentation',
+              headerStyle: { backgroundColor: colors.bg.secondary },
+              headerTintColor: colors.text.primary,
+              headerBackTitle: 'Home',
+            }}
+          />
+          <Stack.Screen
+            name="new-project"
+            options={{
+              title: 'New Project',
+              headerStyle: { backgroundColor: colors.bg.secondary },
+              headerTintColor: colors.text.primary,
+              headerBackTitle: 'Home',
+            }}
+          />
+          <Stack.Screen
+            name="live-preview"
+            options={{
+              title: 'Live Preview',
+              headerStyle: { backgroundColor: colors.bg.secondary },
+              headerTintColor: colors.text.primary,
+              headerBackTitle: 'Home',
+            }}
+          />
+          <Stack.Screen
+            name="farmwork-install"
+            options={{
+              title: '',
+              headerStyle: { backgroundColor: colors.bg.secondary },
+              headerTintColor: colors.text.primary,
+              headerBackTitle: 'Home',
+            }}
+          />
+          <Stack.Screen
+            name="board"
+            options={{
+              title: 'The Board',
+              headerStyle: { backgroundColor: colors.bg.secondary },
+              headerTintColor: colors.text.primary,
+              headerBackTitle: 'Home',
             }}
           />
         </Stack>

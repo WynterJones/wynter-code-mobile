@@ -55,7 +55,20 @@ async function apiFetch<T>(
     throw new Error(error.error || `HTTP ${response.status}`);
   }
 
-  return response.json();
+  // Handle empty responses (e.g., 200 OK with no body for PATCH/DELETE)
+  const contentLength = response.headers.get('content-length');
+  const contentType = response.headers.get('content-type');
+  if (contentLength === '0' || !contentType?.includes('application/json')) {
+    return undefined as T;
+  }
+
+  // Try to parse JSON, return undefined if empty
+  const text = await response.text();
+  if (!text || text.trim() === '') {
+    return undefined as T;
+  }
+
+  return JSON.parse(text);
 }
 
 // Pairing (no auth required)
@@ -141,6 +154,158 @@ export async function fetchWorkspaces(): Promise<Workspace[]> {
 export async function fetchProjects(workspaceId: string): Promise<Project[]> {
   // API returns projects directly, not wrapped in ApiResponse
   return apiFetch<Project[]>(`/workspaces/${workspaceId}/projects`);
+}
+
+// Workspace CRUD
+export interface CreateWorkspaceInput {
+  name: string;
+  color?: string;
+}
+
+export interface CreateWorkspaceResponse {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export async function createWorkspace(input: CreateWorkspaceInput): Promise<CreateWorkspaceResponse> {
+  return apiFetch<CreateWorkspaceResponse>('/workspaces', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export interface UpdateWorkspaceInput {
+  name?: string;
+  color?: string;
+}
+
+export async function updateWorkspace(workspaceId: string, input: UpdateWorkspaceInput): Promise<void> {
+  await apiFetch<void>(`/workspaces/${workspaceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteWorkspace(workspaceId: string): Promise<void> {
+  await apiFetch<void>(`/workspaces/${workspaceId}`, {
+    method: 'DELETE',
+  });
+}
+
+// Project CRUD
+export interface CreateProjectInput {
+  name: string;
+  path: string;
+  color?: string;
+}
+
+export interface CreateProjectResponse {
+  id: string;
+  name: string;
+  path: string;
+  workspaceId: string;
+}
+
+export async function createProject(workspaceId: string, input: CreateProjectInput): Promise<CreateProjectResponse> {
+  return apiFetch<CreateProjectResponse>(`/workspaces/${workspaceId}/projects`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export interface UpdateProjectInput {
+  name?: string;
+  color?: string;
+}
+
+export async function updateProject(projectId: string, input: UpdateProjectInput): Promise<void> {
+  await apiFetch<void>(`/projects/${projectId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  await apiFetch<void>(`/projects/${projectId}`, {
+    method: 'DELETE',
+  });
+}
+
+// Netlify API
+export interface NetlifyAuthResponse {
+  authenticated: boolean;
+  user?: {
+    id: string;
+    email: string;
+    full_name?: string;
+    avatar_url?: string;
+  };
+}
+
+export interface NetlifySite {
+  id: string;
+  name: string;
+  url: string;
+  ssl_url: string;
+  admin_url: string;
+  created_at: string;
+  updated_at: string;
+  screenshot_url?: string;
+}
+
+export interface NetlifyDeploy {
+  id: string;
+  state: string; // 'ready' | 'building' | 'error' | 'enqueued'
+  created_at: string;
+  published_at?: string;
+  deploy_url: string;
+  deploy_ssl_url: string;
+  error_message?: string;
+}
+
+export async function netlifySetToken(token: string): Promise<NetlifyAuthResponse> {
+  return apiFetch<NetlifyAuthResponse>('/netlify/auth', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+}
+
+export async function netlifyCheckAuth(): Promise<NetlifyAuthResponse> {
+  return apiFetch<NetlifyAuthResponse>('/netlify/auth');
+}
+
+export async function netlifyListSites(): Promise<NetlifySite[]> {
+  return apiFetch<NetlifySite[]>('/netlify/sites');
+}
+
+export async function netlifyCreateSite(name: string): Promise<NetlifySite> {
+  return apiFetch<NetlifySite>('/netlify/sites', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function netlifyListDeploys(siteId: string): Promise<NetlifyDeploy[]> {
+  return apiFetch<NetlifyDeploy[]>(`/netlify/sites/${siteId}/deploys`);
+}
+
+export interface NetlifyDeployResponse {
+  deploy: NetlifyDeploy;
+}
+
+export async function netlifyDeploy(siteId: string, projectPath: string): Promise<NetlifyDeployResponse> {
+  return apiFetch<NetlifyDeployResponse>('/netlify/deploy', {
+    method: 'POST',
+    body: JSON.stringify({ site_id: siteId, project_path: projectPath }),
+  });
+}
+
+export async function netlifyRollback(siteId: string, deployId: string): Promise<NetlifyDeploy> {
+  return apiFetch<NetlifyDeploy>('/netlify/rollback', {
+    method: 'POST',
+    body: JSON.stringify({ site_id: siteId, deploy_id: deployId }),
+  });
 }
 
 // Issues (Beads) - Note: API expects project_path as query param
@@ -244,13 +409,16 @@ export async function closeIssue(
 
 // Auto-Build
 export async function fetchAutoBuildStatus(projectId: string): Promise<AutoBuildState> {
-  const response = await apiFetch<ApiResponse<AutoBuildState>>(
+  // API returns the state directly, not wrapped in ApiResponse
+  const response = await apiFetch<AutoBuildState>(
     `/projects/${projectId}/autobuild/status`
   );
-  return response.data || {
+  return response || {
     status: 'stopped',
     workers: [],
     queue: [],
+    humanReview: [],
+    completed: [],
     logs: [],
     progress: 0,
   };
@@ -336,17 +504,29 @@ export async function rejectToolCall(
 export interface MobileChatRequest {
   provider: string;
   model: string;
+  mode?: string; // 'normal' | 'plan' | 'auto'
   message: string;
+  cwd?: string; // Working directory for CLI processes
+  session_id?: string; // Session ID for continuing conversations
   history?: Array<{ role: string; content: string }>;
 }
 
 export interface MobileChatChunk {
-  type: 'content' | 'tool_start' | 'tool_result' | 'done' | 'error';
+  type: 'content' | 'tool_start' | 'tool_result' | 'tool_error' | 'thinking' | 'done' | 'error';
   content?: string;
   tool_name?: string;
+  tool_id?: string;
   tool_input?: Record<string, unknown>;
   tool_output?: string;
+  tool_is_error?: boolean;
   error?: string;
+  // File-related tools
+  file_path?: string;
+  // Bash-related
+  command?: string;
+  // Search-related
+  pattern?: string;
+  query?: string;
 }
 
 export async function sendMobileChatMessage(
@@ -362,55 +542,85 @@ export async function sendMobileChatMessage(
   const { host, port, token } = connection.device;
   const url = `http://${host}:${port}/api/v1/mobile/chat`;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify(request),
-  });
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(error.error || `HTTP ${response.status}`);
-  }
+    let buffer = '';
+    let lastProcessedIndex = 0;
 
-  // Handle streaming response
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error('No response body');
-  }
+    xhr.onprogress = () => {
+      // Get new data since last progress event
+      const newData = xhr.responseText.substring(lastProcessedIndex);
+      lastProcessedIndex = xhr.responseText.length;
+      buffer += newData;
 
-  const decoder = new TextDecoder();
-  let buffer = '';
+      // Process complete lines (SSE format)
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    // Process complete lines (SSE format)
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6).trim();
-        if (data === '[DONE]') {
-          onChunk({ type: 'done' });
-          return;
-        }
-        try {
-          const chunk: MobileChatChunk = JSON.parse(data);
-          onChunk(chunk);
-        } catch (e) {
-          console.error('[MobileChat] Failed to parse chunk:', data, e);
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') {
+            onChunk({ type: 'done' });
+            return;
+          }
+          try {
+            const chunk: MobileChatChunk = JSON.parse(data);
+            onChunk(chunk);
+          } catch (e) {
+            console.error('[MobileChat] Failed to parse chunk:', data, e);
+          }
         }
       }
-    }
-  }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        // Process any remaining data in buffer
+        if (buffer.trim()) {
+          const lines = buffer.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6).trim();
+              if (data === '[DONE]') {
+                onChunk({ type: 'done' });
+              } else {
+                try {
+                  const chunk: MobileChatChunk = JSON.parse(data);
+                  onChunk(chunk);
+                } catch (e) {
+                  console.error('[MobileChat] Failed to parse final chunk:', data, e);
+                }
+              }
+            }
+          }
+        }
+        onChunk({ type: 'done' });
+        resolve();
+      } else {
+        try {
+          const error = JSON.parse(xhr.responseText);
+          reject(new Error(error.error || `HTTP ${xhr.status}`));
+        } catch {
+          reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
+        }
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error('Network error'));
+    };
+
+    xhr.ontimeout = () => {
+      reject(new Error('Request timeout'));
+    };
+
+    xhr.send(JSON.stringify(request));
+  });
 }
 
 // Overwatch Services
@@ -520,6 +730,123 @@ export async function fetchSubscriptions(workspaceId?: string): Promise<{
   };
 }
 
+// Subscription CRUD
+export interface CreateSubscriptionInput {
+  workspaceId: string;
+  name: string;
+  url?: string;
+  faviconUrl?: string;
+  monthlyCost: number;
+  billingCycle?: import('../types').BillingCycle;
+  currency?: string;
+  categoryId?: string;
+  notes?: string;
+  isActive?: boolean;
+}
+
+export interface UpdateSubscriptionInput {
+  name?: string;
+  url?: string;
+  faviconUrl?: string;
+  monthlyCost?: number;
+  billingCycle?: import('../types').BillingCycle;
+  currency?: string;
+  categoryId?: string | null;
+  notes?: string | null;
+  isActive?: boolean;
+  sortOrder?: number;
+}
+
+export async function getSubscription(id: string): Promise<import('../types').Subscription> {
+  const response = await apiFetch<ApiSubscription>(`/subscriptions/${id}`);
+  return transformSubscription(response);
+}
+
+export async function createSubscription(input: CreateSubscriptionInput): Promise<import('../types').Subscription> {
+  const response = await apiFetch<ApiSubscription>('/subscriptions', {
+    method: 'POST',
+    body: JSON.stringify({
+      workspace_id: input.workspaceId,
+      name: input.name,
+      url: input.url,
+      favicon_url: input.faviconUrl,
+      monthly_cost: input.monthlyCost,
+      billing_cycle: input.billingCycle,
+      currency: input.currency,
+      category_id: input.categoryId,
+      notes: input.notes,
+      is_active: input.isActive,
+    }),
+  });
+  return transformSubscription(response);
+}
+
+export async function updateSubscription(id: string, input: UpdateSubscriptionInput): Promise<void> {
+  await apiFetch<void>(`/subscriptions/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      name: input.name,
+      url: input.url,
+      favicon_url: input.faviconUrl,
+      monthly_cost: input.monthlyCost,
+      billing_cycle: input.billingCycle,
+      currency: input.currency,
+      category_id: input.categoryId,
+      notes: input.notes,
+      is_active: input.isActive,
+      sort_order: input.sortOrder,
+    }),
+  });
+}
+
+export async function deleteSubscription(id: string): Promise<void> {
+  await apiFetch<void>(`/subscriptions/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+// Subscription Category CRUD
+export interface CreateSubscriptionCategoryInput {
+  workspaceId: string;
+  name: string;
+  color?: string;
+}
+
+export interface UpdateSubscriptionCategoryInput {
+  name?: string;
+  color?: string | null;
+  sortOrder?: number;
+}
+
+export async function createSubscriptionCategory(input: CreateSubscriptionCategoryInput): Promise<import('../types').SubscriptionCategory> {
+  const response = await apiFetch<ApiSubscriptionCategory>('/subscriptions/categories', {
+    method: 'POST',
+    body: JSON.stringify({
+      workspace_id: input.workspaceId,
+      name: input.name,
+      color: input.color,
+    }),
+  });
+  return transformSubscriptionCategory(response);
+}
+
+export async function updateSubscriptionCategory(id: string, input: UpdateSubscriptionCategoryInput): Promise<void> {
+  await apiFetch<void>(`/subscriptions/categories/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      name: input.name,
+      color: input.color,
+      sort_order: input.sortOrder,
+    }),
+  });
+}
+
+export async function deleteSubscriptionCategory(id: string): Promise<void> {
+  await apiFetch<void>(`/subscriptions/categories/${id}`, {
+    method: 'DELETE',
+  });
+}
+
 // Bookmarks
 interface ApiBookmark {
   id: string;
@@ -575,6 +902,378 @@ export async function fetchBookmarks(): Promise<{
   };
 }
 
+// Bookmark CRUD
+export interface CreateBookmarkInput {
+  url: string;
+  title: string;
+  description?: string;
+  faviconUrl?: string;
+  collectionId?: string;
+}
+
+export async function createBookmark(input: CreateBookmarkInput): Promise<import('../types').Bookmark> {
+  const apiBookmark = await apiFetch<ApiBookmark>('/bookmarks', {
+    method: 'POST',
+    body: JSON.stringify({
+      url: input.url,
+      title: input.title,
+      description: input.description,
+      favicon_url: input.faviconUrl,
+      collection_id: input.collectionId,
+    }),
+  });
+  return transformBookmark(apiBookmark);
+}
+
+export interface UpdateBookmarkInput {
+  url?: string;
+  title?: string;
+  description?: string;
+  faviconUrl?: string;
+  collectionId?: string | null;
+  order?: number;
+}
+
+export async function updateBookmark(id: string, input: UpdateBookmarkInput): Promise<void> {
+  await apiFetch<void>(`/bookmarks/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      url: input.url,
+      title: input.title,
+      description: input.description,
+      favicon_url: input.faviconUrl,
+      collection_id: input.collectionId,
+      order: input.order,
+    }),
+  });
+}
+
+export async function deleteBookmark(id: string): Promise<void> {
+  await apiFetch<void>(`/bookmarks/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+// Bookmark Collection CRUD
+export interface CreateBookmarkCollectionInput {
+  name: string;
+  icon?: string;
+  color?: string;
+}
+
+export async function createBookmarkCollection(input: CreateBookmarkCollectionInput): Promise<import('../types').BookmarkCollection> {
+  const apiCollection = await apiFetch<ApiBookmarkCollection>('/bookmarks/collections', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: input.name,
+      icon: input.icon,
+      color: input.color,
+    }),
+  });
+  return transformBookmarkCollection(apiCollection);
+}
+
+export interface UpdateBookmarkCollectionInput {
+  name?: string;
+  icon?: string;
+  color?: string;
+  order?: number;
+}
+
+export async function updateBookmarkCollection(id: string, input: UpdateBookmarkCollectionInput): Promise<void> {
+  await apiFetch<void>(`/bookmarks/collections/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      name: input.name,
+      icon: input.icon,
+      color: input.color,
+      order: input.order,
+    }),
+  });
+}
+
+export async function deleteBookmarkCollection(id: string): Promise<void> {
+  await apiFetch<void>(`/bookmarks/collections/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+// Docs - List and view markdown files
+export interface DocFile {
+  name: string;
+  path: string;
+  folder?: string;
+  size: number;
+  modified?: number;
+}
+
+export interface DocsListResponse {
+  docs: DocFile[];
+}
+
+export interface DocsContentResponse {
+  content: string;
+  name: string;
+  path: string;
+}
+
+export async function fetchDocsList(projectPath: string): Promise<DocFile[]> {
+  const encodedPath = encodeURIComponent(projectPath);
+  const response = await apiFetch<DocsListResponse>(`/docs/list?project_path=${encodedPath}`);
+  return response.docs;
+}
+
+export async function fetchDocContent(projectPath: string, filePath: string): Promise<DocsContentResponse> {
+  const encodedProjectPath = encodeURIComponent(projectPath);
+  const encodedFilePath = encodeURIComponent(filePath);
+  return apiFetch<DocsContentResponse>(
+    `/docs/content?project_path=${encodedProjectPath}&file_path=${encodedFilePath}`
+  );
+}
+
+export async function saveDocContent(projectPath: string, filePath: string, content: string): Promise<void> {
+  await apiFetch<void>('/docs/save', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_path: projectPath,
+      file_path: filePath,
+      content,
+    }),
+  });
+}
+
+// ============================================================================
+// Templates API
+// ============================================================================
+
+export interface TemplatesResponse {
+  templates: import('../types').ProjectTemplate[];
+  categories: import('../types').CategoryInfo[];
+}
+
+export async function fetchTemplates(): Promise<TemplatesResponse> {
+  return apiFetch<TemplatesResponse>('/templates');
+}
+
+// ============================================================================
+// Filesystem API
+// ============================================================================
+
+export async function fetchFilesystemBrowse(path: string): Promise<import('../types').FilesystemBrowseResponse> {
+  const encodedPath = encodeURIComponent(path);
+  return apiFetch<import('../types').FilesystemBrowseResponse>(`/filesystem/browse?path=${encodedPath}`);
+}
+
+export async function createDirectory(path: string): Promise<{ path: string; created: boolean }> {
+  return apiFetch<{ path: string; created: boolean }>('/filesystem/mkdir', {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+  });
+}
+
+export async function fetchHomeDirectory(): Promise<{ path: string }> {
+  return apiFetch<{ path: string }>('/filesystem/homedir');
+}
+
+// ============================================================================
+// Terminal API
+// ============================================================================
+
+export interface TerminalCreateRequest {
+  cwd: string;
+  cols?: number;
+  rows?: number;
+  shell?: string;
+}
+
+export async function createTerminal(request: TerminalCreateRequest): Promise<{ pty_id: string }> {
+  return apiFetch<{ pty_id: string }>('/terminal/create', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function writeTerminal(ptyId: string, data: string): Promise<void> {
+  await apiFetch<void>(`/terminal/${ptyId}/write`, {
+    method: 'POST',
+    body: JSON.stringify({ data }),
+  });
+}
+
+export async function closeTerminal(ptyId: string): Promise<void> {
+  await apiFetch<void>(`/terminal/${ptyId}`, {
+    method: 'DELETE',
+  });
+}
+
+// ============================================================================
+// Live Preview API
+// ============================================================================
+
+export async function detectPreviewProject(projectPath: string): Promise<import('../types').PreviewDetectResult> {
+  const encodedPath = encodeURIComponent(projectPath);
+  return apiFetch<import('../types').PreviewDetectResult>(`/preview/detect?project_path=${encodedPath}`);
+}
+
+export interface PreviewStartRequest {
+  projectPath: string;
+  port?: number;
+  useFrameworkServer?: boolean;
+}
+
+export async function startPreview(request: PreviewStartRequest): Promise<import('../types').PreviewStartResponse> {
+  return apiFetch<import('../types').PreviewStartResponse>('/preview/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_path: request.projectPath,
+      port: request.port,
+      use_framework_server: request.useFrameworkServer,
+    }),
+  });
+}
+
+export async function stopPreview(serverId: string): Promise<void> {
+  await apiFetch<void>('/preview/stop', {
+    method: 'POST',
+    body: JSON.stringify({ server_id: serverId }),
+  });
+}
+
+export async function fetchPreviewStatus(serverId?: string): Promise<import('../types').PreviewServer | null> {
+  const params = serverId ? `?server_id=${serverId}` : '';
+  return apiFetch<import('../types').PreviewServer | null>(`/preview/status${params}`);
+}
+
+export async function fetchPreviewList(): Promise<import('../types').PreviewServer[]> {
+  return apiFetch<import('../types').PreviewServer[]>('/preview/list');
+}
+
+// ============================================================================
+// Tunnel API
+// ============================================================================
+
+export async function checkTunnel(): Promise<import('../types').TunnelCheckResult> {
+  return apiFetch<import('../types').TunnelCheckResult>('/tunnel/check');
+}
+
+export async function startTunnel(port: number): Promise<{ tunnelId: string }> {
+  return apiFetch<{ tunnelId: string }>('/tunnel/start', {
+    method: 'POST',
+    body: JSON.stringify({ port }),
+  });
+}
+
+export async function stopTunnel(tunnelId: string): Promise<void> {
+  await apiFetch<void>('/tunnel/stop', {
+    method: 'POST',
+    body: JSON.stringify({ tunnel_id: tunnelId }),
+  });
+}
+
+export async function fetchTunnelList(): Promise<import('../types').TunnelInfo[]> {
+  return apiFetch<import('../types').TunnelInfo[]>('/tunnel/list');
+}
+
+// ============================================================================
+// Farmwork API
+// ============================================================================
+
+export interface FarmworkCheckResponse {
+  installed: boolean;
+  config_path: string | null;
+}
+
+export async function checkFarmworkInstalled(projectPath: string): Promise<FarmworkCheckResponse> {
+  const encodedPath = encodeURIComponent(projectPath);
+  return apiFetch<FarmworkCheckResponse>(`/farmwork/check?project_path=${encodedPath}`);
+}
+
+// ============================================================================
+// Kanban Board API
+// ============================================================================
+
+interface ApiKanbanTask {
+  id: string;
+  title: string;
+  description?: string;
+  status: string;
+  priority: number;
+  created_at: number;
+  updated_at: number;
+  order: number;
+  locked: boolean;
+}
+
+function transformKanbanTask(api: ApiKanbanTask): import('../types').KanbanTask {
+  return {
+    id: api.id,
+    title: api.title,
+    description: api.description,
+    status: api.status as import('../types').KanbanStatus,
+    priority: api.priority as import('../types').KanbanPriority,
+    createdAt: api.created_at,
+    updatedAt: api.updated_at,
+    order: api.order,
+    locked: api.locked,
+  };
+}
+
+export async function fetchKanbanTasks(workspaceId: string): Promise<import('../types').KanbanTask[]> {
+  const tasks = await apiFetch<ApiKanbanTask[]>(`/kanban/${workspaceId}`);
+  return tasks.map(transformKanbanTask);
+}
+
+export async function createKanbanTask(
+  workspaceId: string,
+  input: import('../types').CreateKanbanTaskInput
+): Promise<import('../types').KanbanTask> {
+  const task = await apiFetch<ApiKanbanTask>(`/kanban/${workspaceId}/tasks`, {
+    method: 'POST',
+    body: JSON.stringify({
+      title: input.title,
+      description: input.description,
+      priority: input.priority,
+    }),
+  });
+  return transformKanbanTask(task);
+}
+
+export async function updateKanbanTask(
+  workspaceId: string,
+  taskId: string,
+  input: import('../types').UpdateKanbanTaskInput
+): Promise<void> {
+  await apiFetch<void>(`/kanban/${workspaceId}/tasks/${taskId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      title: input.title,
+      description: input.description,
+      priority: input.priority,
+      locked: input.locked,
+    }),
+  });
+}
+
+export async function deleteKanbanTask(workspaceId: string, taskId: string): Promise<void> {
+  await apiFetch<void>(`/kanban/${workspaceId}/tasks/${taskId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function moveKanbanTask(
+  workspaceId: string,
+  taskId: string,
+  input: import('../types').MoveKanbanTaskInput
+): Promise<void> {
+  await apiFetch<void>(`/kanban/${workspaceId}/tasks/${taskId}/move`, {
+    method: 'POST',
+    body: JSON.stringify({
+      status: input.status,
+      order: input.order,
+    }),
+  });
+}
+
 // Query Keys
 export const queryKeys = {
   workspaces: ['workspaces'] as const,
@@ -587,4 +1286,16 @@ export const queryKeys = {
   overwatch: (workspaceId?: string) => ['overwatch', workspaceId] as const,
   subscriptions: (workspaceId?: string) => ['subscriptions', workspaceId] as const,
   bookmarks: ['bookmarks'] as const,
+  docs: (projectPath: string) => ['docs', projectPath] as const,
+  docContent: (projectPath: string, filePath: string) => ['doc-content', projectPath, filePath] as const,
+  templates: ['templates'] as const,
+  filesystem: (path: string) => ['filesystem', path] as const,
+  homeDirectory: ['homeDirectory'] as const,
+  previewDetect: (projectPath: string) => ['preview-detect', projectPath] as const,
+  previewList: ['preview-list'] as const,
+  previewStatus: (serverId?: string) => ['preview-status', serverId] as const,
+  tunnelCheck: ['tunnel-check'] as const,
+  tunnelList: ['tunnel-list'] as const,
+  farmworkCheck: (projectPath: string) => ['farmwork-check', projectPath] as const,
+  kanban: (workspaceId: string) => ['kanban', workspaceId] as const,
 };
