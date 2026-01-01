@@ -2,9 +2,8 @@
  * MarkdownRenderer - renders markdown content with code block support
  * Handles inline code, code blocks with language detection, and basic formatting
  */
-import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
-import * as Clipboard from 'expo-clipboard';
+import React, { useMemo, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { colors, spacing, borderRadius } from '@/src/theme';
 
@@ -190,9 +189,17 @@ function TextBlock({ content }: { content: string }) {
 function CodeBlockView({ content, language }: { content: string; language?: string }) {
   const langConfig = language ? LANGUAGE_CONFIG[language.toLowerCase()] : null;
   const lines = content.split('\n');
+  const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
-    await Clipboard.setStringAsync(content);
+    try {
+      const Clipboard = await import('expo-clipboard');
+      await Clipboard.setStringAsync(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      Alert.alert('Copy not available', 'Clipboard requires a development build. Use Expo dev build to enable this feature.');
+    }
   };
 
   return (
@@ -212,7 +219,7 @@ function CodeBlockView({ content, language }: { content: string; language?: stri
           <Text style={styles.lineCount}>{lines.length} lines</Text>
         </View>
         <TouchableOpacity onPress={handleCopy} style={styles.copyButton}>
-          <FontAwesome name="copy" size={12} color={colors.text.muted} />
+          <FontAwesome name={copied ? "check" : "copy"} size={12} color={copied ? colors.accent.green : colors.text.muted} />
         </TouchableOpacity>
       </View>
 

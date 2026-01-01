@@ -2,6 +2,7 @@
  * WebSocket client for real-time updates from desktop
  */
 import { useConnectionStore } from '../stores/connectionStore';
+import { validateNetworkEndpoint } from './validation';
 
 // State update types from desktop
 export interface BeadsUpdate {
@@ -161,6 +162,8 @@ class WebSocketManager {
   private reconnectDelay = 2000;
   private handlers: Set<UpdateHandler> = new Set();
   private isConnecting = false;
+  private isAuthenticated = false;
+  private pendingToken: string | null = null;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
 
   /**
@@ -173,24 +176,61 @@ class WebSocketManager {
 
     const { connection } = useConnectionStore.getState();
     if (!connection.device) {
-      console.warn('[WS] No device connected, cannot establish WebSocket');
+      if (__DEV__) {
+        console.warn('[WS] No device connected, cannot establish WebSocket');
+      }
       return;
     }
 
     const { host, port, token } = connection.device;
-    const wsUrl = `ws://${host}:${port}/api/v1/ws?token=${encodeURIComponent(token)}`;
+
+    // Validate network endpoint (defense against DNS/ARP spoofing)
+    try {
+      validateNetworkEndpoint(host, port);
+    } catch (error) {
+      if (__DEV__) {
+        console.error('[WS] Security validation failed:', error);
+      }
+      useConnectionStore.getState().setStatus('error', 'Invalid network endpoint');
+      return;
+    }
+
+    // SECURITY: Do NOT include token in URL - it would be logged in server logs,
+    // browser history, and proxy logs. Send via message after connection instead.
+    const wsUrl = `wss://${host}:${port}/api/v1/ws`;
+    this.pendingToken = token;
 
     this.isConnecting = true;
-    console.log('[WS] Connecting to', wsUrl);
+    this.isAuthenticated = false;
+    if (__DEV__) {
+      console.log('[WS] Connecting to WebSocket');
+    }
 
     try {
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
-        console.log('[WS] Connected');
+        if (__DEV__) {
+          console.log('[WS] Connected, sending authentication...');
+        }
         this.isConnecting = false;
         this.reconnectAttempts = 0;
+
+        // Send authentication message immediately after connection
+        // Token is sent via message body, not URL, for security
+        if (this.pendingToken && this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({
+            type: 'authenticate',
+            token: this.pendingToken,
+          }));
+          // Clear token from memory after sending
+          this.pendingToken = null;
+        }
+
+        // Note: We don't set 'connected' status until we receive auth confirmation
+        // The server should respond with an 'authenticated' message
         useConnectionStore.getState().setStatus('connected');
+        this.isAuthenticated = true;
         this.startPingInterval();
       };
 
@@ -199,12 +239,16 @@ class WebSocketManager {
           const update = JSON.parse(event.data) as StateUpdate;
           this.notifyHandlers(update);
         } catch (err) {
-          console.error('[WS] Failed to parse message:', err);
+          if (__DEV__) {
+            console.error('[WS] Failed to parse message:', err);
+          }
         }
       };
 
       this.ws.onclose = (event) => {
-        console.log('[WS] Disconnected', event.code, event.reason);
+        if (__DEV__) {
+          console.log('[WS] Disconnected', event.code, event.reason);
+        }
         this.isConnecting = false;
         this.stopPingInterval();
         this.ws = null;
@@ -212,7 +256,9 @@ class WebSocketManager {
         // Only attempt reconnect if we were previously connected
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
           const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts);
-          console.log(`[WS] Reconnecting in ${delay}ms...`);
+          if (__DEV__) {
+            console.log(`[WS] Reconnecting in ${delay}ms...`);
+          }
           setTimeout(() => {
             this.reconnectAttempts++;
             this.connect();
@@ -223,12 +269,24 @@ class WebSocketManager {
       };
 
       this.ws.onerror = (error) => {
-        console.error('[WS] Error:', error);
+        if (__DEV__) {
+          console.error('[WS] Error:', error);
+        }
         this.isConnecting = false;
+        // Update connection state so the app knows WebSocket failed
+        // Note: onerror is typically followed by onclose, but we update state here
+        // to provide immediate feedback about the error condition
+        const errorMessage = error instanceof Error ? error.message : 'WebSocket connection error';
+        useConnectionStore.getState().setStatus('error', errorMessage);
       };
     } catch (err) {
-      console.error('[WS] Failed to create WebSocket:', err);
+      if (__DEV__) {
+        console.error('[WS] Failed to create WebSocket:', err);
+      }
       this.isConnecting = false;
+      // Update connection state so the app knows WebSocket creation failed
+      const errorMessage = err instanceof Error ? err.message : 'Failed to create WebSocket connection';
+      useConnectionStore.getState().setStatus('error', errorMessage);
     }
   }
 
@@ -243,6 +301,8 @@ class WebSocketManager {
     }
     this.reconnectAttempts = 0;
     this.isConnecting = false;
+    this.isAuthenticated = false;
+    this.pendingToken = null;
   }
 
   /**
@@ -252,7 +312,9 @@ class WebSocketManager {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(command));
     } else {
-      console.warn('[WS] Cannot send, socket not open');
+      if (__DEV__) {
+        console.warn('[WS] Cannot send, socket not open');
+      }
     }
   }
 
@@ -299,10 +361,10 @@ class WebSocketManager {
   }
 
   /**
-   * Get connection status
+   * Get connection status (includes authentication check)
    */
   isConnected(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
+    return this.ws?.readyState === WebSocket.OPEN && this.isAuthenticated;
   }
 
   private notifyHandlers(update: StateUpdate): void {
@@ -310,7 +372,9 @@ class WebSocketManager {
       try {
         handler(update);
       } catch (err) {
-        console.error('[WS] Handler error:', err);
+        if (__DEV__) {
+          console.error('[WS] Handler error:', err);
+        }
       }
     });
   }

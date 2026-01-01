@@ -16,7 +16,7 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import Animated, { FadeIn, SlideInRight, SlideOutLeft } from 'react-native-reanimated';
 
 import { colors, spacing, borderRadius } from '@/src/theme';
-import { useConnectionStore } from '@/src/stores';
+import { useConnectionStore, useProjectStore } from '@/src/stores';
 import {
   fetchTemplates,
   fetchFilesystemBrowse,
@@ -25,9 +25,11 @@ import {
   createTerminal,
   writeTerminal,
   closeTerminal,
+  createProject,
 } from '@/src/api/client';
 import { XTermWebView } from '@/src/components/XTermWebView';
-import type { ProjectTemplate, CategoryInfo, DirectoryEntry, Workspace } from '@/src/types';
+import { ScreenErrorBoundary } from '@/src/components/ScreenErrorBoundary';
+import type { ProjectTemplate, CategoryInfo, DirectoryEntry } from '@/src/types';
 
 type Step = 'template' | 'location' | 'name' | 'running' | 'complete';
 
@@ -51,9 +53,10 @@ const templateColors: TemplateColorMap = {
   white: colors.text.primary,
 };
 
-export default function NewProjectScreen() {
+function NewProjectScreenContent() {
   const router = useRouter();
   const { connection } = useConnectionStore();
+  const selectedProject = useProjectStore((s) => s.selectedProject);
   const isConnected = connection.status === 'connected';
 
   // Wizard state
@@ -83,9 +86,6 @@ export default function NewProjectScreen() {
   const [isRunning, setIsRunning] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
-
-  // Workspace selection for attaching project
-  const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
 
   // Load templates on mount
   useEffect(() => {
@@ -251,7 +251,20 @@ export default function NewProjectScreen() {
       }
     }
 
-    // TODO: Optionally attach to workspace using createProject API
+    // Attach new project to the same workspace as the currently selected project
+    if (selectedProject?.workspaceId && projectName && selectedPath) {
+      try {
+        const projectPath = `${selectedPath}/${projectName}`;
+        await createProject(selectedProject.workspaceId, {
+          name: projectName,
+          path: projectPath,
+          color: selectedTemplate?.color,
+        });
+      } catch (err) {
+        console.error('Failed to attach project to workspace:', err);
+      }
+    }
+
     router.back();
   };
 
@@ -853,3 +866,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
+
+export default function NewProjectScreen() {
+  return (
+    <ScreenErrorBoundary screenName="New Project">
+      <NewProjectScreenContent />
+    </ScreenErrorBoundary>
+  );
+}

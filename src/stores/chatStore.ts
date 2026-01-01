@@ -5,6 +5,38 @@ import { create } from 'zustand';
 import { wsManager, ChatStreamUpdate, ToolCallUpdate } from '../api/websocket';
 import type { ChatSession, ChatMessage, ToolCall } from '../types';
 
+// ============================================================================
+// Efficient Map Update Utilities
+// ============================================================================
+
+/**
+ * Efficiently updates a Map by mutating a copy only when necessary.
+ * Reduces allocations compared to creating a new Map on every update.
+ */
+function updateMap<K, V>(map: Map<K, V>, key: K, value: V): Map<K, V> {
+  // Check if we actually need to update
+  const existing = map.get(key);
+  if (existing === value) {
+    return map; // No change needed, return same reference
+  }
+  // Create new Map only when we have an actual change
+  const newMap = new Map(map);
+  newMap.set(key, value);
+  return newMap;
+}
+
+/**
+ * Efficiently deletes from a Map by mutating a copy only when necessary.
+ */
+function deleteFromMap<K, V>(map: Map<K, V>, key: K): Map<K, V> {
+  if (!map.has(key)) {
+    return map; // Key doesn't exist, return same reference
+  }
+  const newMap = new Map(map);
+  newMap.delete(key);
+  return newMap;
+}
+
 interface StreamingState {
   sessionId: string;
   messageId: string;
@@ -80,28 +112,30 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     setMessages: (sessionId, messages) => {
       const current = get().messages;
-      const updated = new Map(current);
-      updated.set(sessionId, messages);
-      set({ messages: updated });
+      const updated = updateMap(current, sessionId, messages);
+      if (updated !== current) {
+        set({ messages: updated });
+      }
     },
 
     addMessage: (sessionId, message) => {
       const current = get().messages;
-      const updated = new Map(current);
-      const sessionMessages = updated.get(sessionId) || [];
-      updated.set(sessionId, [...sessionMessages, message]);
-      set({ messages: updated });
+      const sessionMessages = current.get(sessionId) || [];
+      const newMessages = [...sessionMessages, message];
+      set({ messages: updateMap(current, sessionId, newMessages) });
     },
 
     updateMessage: (sessionId, messageId, updates) => {
       const current = get().messages;
-      const updated = new Map(current);
-      const sessionMessages = updated.get(sessionId) || [];
+      const sessionMessages = current.get(sessionId) || [];
       const updatedMessages = sessionMessages.map((msg) =>
         msg.id === messageId ? { ...msg, ...updates } : msg
       );
-      updated.set(sessionId, updatedMessages);
-      set({ messages: updated });
+      // Only update if we actually changed something
+      const hasChanges = sessionMessages.some((msg, i) => msg !== updatedMessages[i]);
+      if (hasChanges) {
+        set({ messages: updateMap(current, sessionId, updatedMessages) });
+      }
     },
 
     setLoadingSessions: (isLoadingSessions) => set({ isLoadingSessions }),
@@ -164,30 +198,29 @@ export const useChatStore = create<ChatStore>((set, get) => {
     // Tool call actions
     addPendingToolCall: (toolCall) => {
       const current = get().pendingToolCalls;
-      const updated = new Map(current);
-      updated.set(toolCall.id, toolCall);
-      set({ pendingToolCalls: updated });
+      set({ pendingToolCalls: updateMap(current, toolCall.id, toolCall) });
     },
 
     updateToolCallStatus: (toolCallId, status) => {
       const { pendingToolCalls, messages, selectedSessionId } = get();
 
       // Update in pending map
-      const updated = new Map(pendingToolCalls);
-      const toolCall = updated.get(toolCallId);
+      const toolCall = pendingToolCalls.get(toolCallId);
       if (toolCall) {
-        updated.set(toolCallId, { ...toolCall, status });
-        if (status !== 'pending') {
-          updated.delete(toolCallId);
+        if (status === 'pending') {
+          set({ pendingToolCalls: updateMap(pendingToolCalls, toolCallId, { ...toolCall, status }) });
+        } else {
+          set({ pendingToolCalls: deleteFromMap(pendingToolCalls, toolCallId) });
         }
       }
-      set({ pendingToolCalls: updated });
 
       // Update in messages
       if (selectedSessionId) {
         const sessionMessages = messages.get(selectedSessionId) || [];
         const updatedMessages = sessionMessages.map((msg) => {
           if (!msg.toolCalls) return msg;
+          const hasToolCall = msg.toolCalls.some((tc) => tc.id === toolCallId);
+          if (!hasToolCall) return msg;
           return {
             ...msg,
             toolCalls: msg.toolCalls.map((tc) =>
@@ -195,17 +228,20 @@ export const useChatStore = create<ChatStore>((set, get) => {
             ),
           };
         });
-        const newMessages = new Map(messages);
-        newMessages.set(selectedSessionId, updatedMessages);
-        set({ messages: newMessages });
+        // Only update if we actually changed something
+        const hasChanges = sessionMessages.some((msg, i) => msg !== updatedMessages[i]);
+        if (hasChanges) {
+          set({ messages: updateMap(messages, selectedSessionId, updatedMessages) });
+        }
       }
     },
 
     removePendingToolCall: (toolCallId) => {
       const current = get().pendingToolCalls;
-      const updated = new Map(current);
-      updated.delete(toolCallId);
-      set({ pendingToolCalls: updated });
+      const updated = deleteFromMap(current, toolCallId);
+      if (updated !== current) {
+        set({ pendingToolCalls: updated });
+      }
     },
 
     // WebSocket handlers

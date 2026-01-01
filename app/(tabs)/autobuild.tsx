@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,6 @@ import {
   RefreshControl,
   ActivityIndicator,
   Image,
-  Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
@@ -17,6 +16,7 @@ import { colors, spacing, borderRadius } from '@/src/theme';
 import { useProjectStore, useConnectionStore, useAutoBuildStore } from '@/src/stores';
 import {
   useAutoBuildStatus,
+  useAutoBuildBacklog,
   useStartAutoBuild,
   usePauseAutoBuild,
   useStopAutoBuild,
@@ -24,9 +24,18 @@ import {
   useRemoveFromAutoBuildQueue,
   useIssues,
 } from '@/src/api/hooks';
-import type { QueueItem, LogEntry, AutoBuildStatus, AutoBuildPhase, Issue } from '@/src/types';
+import { ScreenErrorBoundary } from '@/src/components/ScreenErrorBoundary';
+import type { QueueItem, AutoBuildStatus } from '@/src/types';
+import {
+  CurrentWorkCard,
+  BacklogItemCard,
+  LifecycleItemCard,
+  LogEntryRow,
+  AddToBacklogModal,
+  getPhaseLabel,
+} from '@/src/components/autobuild';
 
-export default function AutoBuildScreen() {
+function AutoBuildScreenContent() {
   const router = useRouter();
   const connection = useConnectionStore((s) => s.connection);
   const selectedProject = useProjectStore((s) => s.selectedProject);
@@ -36,6 +45,7 @@ export default function AutoBuildScreen() {
 
   // Query hooks
   const { refetch, isLoading, isRefetching, isError, error } = useAutoBuildStatus();
+  const { data: backlogData, refetch: refetchBacklog, isLoading: isBacklogLoading } = useAutoBuildBacklog();
   const { data: issues = [] } = useIssues();
 
   // Mutation hooks for controls
@@ -54,19 +64,35 @@ export default function AutoBuildScreen() {
 
   // Pull to refresh
   const onRefresh = useCallback(async () => {
-    await refetch();
-  }, [refetch]);
+    await Promise.all([refetch(), refetchBacklog()]);
+  }, [refetch, refetchBacklog]);
+
+  // Get persistent backlog items (map to QueueItem format)
+  const persistentBacklogItems: QueueItem[] = useMemo(() => {
+    if (!backlogData?.issues) return [];
+    return backlogData.issues.map((item) => ({
+      id: item.id,
+      description: item.title,
+      status: item.status === 'pending' ? 'pending' as const :
+              item.status === 'processing' ? 'processing' as const :
+              item.status === 'completed' ? 'completed' as const : 'pending' as const,
+      createdAt: item.created_at,
+    }));
+  }, [backlogData?.issues]);
 
   // Filter open issues that can be added to backlog
   const availableIssues = useMemo(() => {
+    // Use persistent backlog IDs for filtering
+    const backlogIds = new Set(persistentBacklogItems.map(q => q.id));
     const queuedIds = new Set(buildState.queue.map(q => q.id));
     return issues.filter(
       (issue) =>
         issue.status === 'open' &&
         issue.type !== 'epic' &&
-        !queuedIds.has(issue.id)
+        !queuedIds.has(issue.id) &&
+        !backlogIds.has(issue.id)
     );
-  }, [issues, buildState.queue]);
+  }, [issues, buildState.queue, persistentBacklogItems]);
 
   // Not connected state
   if (!connection.device) {
@@ -147,27 +173,14 @@ export default function AutoBuildScreen() {
     error: colors.accent.red,
   };
 
-  const getPhaseLabel = (phase: AutoBuildPhase): string => {
-    switch (phase) {
-      case 'selecting': return 'Selecting';
-      case 'working': return 'Working';
-      case 'selfReviewing': return 'Self Review';
-      case 'auditing': return 'Auditing';
-      case 'testing': return 'Testing';
-      case 'fixing': return 'Fixing';
-      case 'reviewing': return 'Review';
-      case 'committing': return 'Committing';
-      default: return '';
-    }
-  };
-
-  // Find current issue being worked on
+  // Find current issue being worked on (check both in-memory queue and persistent backlog)
   const currentIssue = buildState.currentIssueId
-    ? buildState.queue.find(q => q.id === buildState.currentIssueId)
+    ? (buildState.queue.find(q => q.id === buildState.currentIssueId) ||
+       persistentBacklogItems.find(q => q.id === buildState.currentIssueId))
     : null;
 
-  // Backlog items (excluding current)
-  const backlogItems = buildState.queue.filter(q => q.id !== buildState.currentIssueId);
+  // Backlog items from persistent storage (excluding current)
+  const backlogItems = persistentBacklogItems.filter(q => q.id !== buildState.currentIssueId);
 
   return (
     <View style={styles.container}>
@@ -206,7 +219,7 @@ export default function AutoBuildScreen() {
             )}
           </View>
           <Text style={styles.queueCount}>
-            {buildState.queue.length} in backlog
+            {persistentBacklogItems.length} in backlog
           </Text>
           {buildState.status === 'running' && buildState.progress > 0 && (
             <View style={styles.overallProgressBar}>
@@ -355,7 +368,7 @@ export default function AutoBuildScreen() {
             </Text>
           </TouchableOpacity>
         </View>
-        {isLoading ? (
+        {isLoading || isBacklogLoading ? (
           <View style={styles.emptySection}>
             <ActivityIndicator size="small" color={colors.accent.purple} />
           </View>
@@ -407,223 +420,6 @@ export default function AutoBuildScreen() {
       />
     </View>
   );
-}
-
-// Current work card showing active progress
-function CurrentWorkCard({
-  item,
-  phase,
-  progress,
-}: {
-  item: QueueItem;
-  phase?: AutoBuildPhase;
-  progress: number;
-}) {
-  const getPhaseIcon = (phase?: AutoBuildPhase) => {
-    switch (phase) {
-      case 'working': return 'wrench';
-      case 'selfReviewing': return 'eye';
-      case 'auditing': return 'search';
-      case 'testing': return 'flask';
-      case 'fixing': return 'wrench';
-      case 'committing': return 'git-square';
-      case 'reviewing': return 'eye';
-      default: return 'bolt';
-    }
-  };
-
-  return (
-    <View style={styles.currentWorkCard}>
-      <View style={styles.currentWorkHeader}>
-        <View style={[styles.currentWorkIcon, { backgroundColor: colors.accent.green + '20' }]}>
-          <FontAwesome name={getPhaseIcon(phase) as any} size={16} color={colors.accent.green} />
-        </View>
-        <View style={styles.currentWorkInfo}>
-          <Text style={styles.currentWorkTitle} numberOfLines={1}>
-            {item.description}
-          </Text>
-          <Text style={styles.currentWorkPhase}>
-            {phase ? phase.replace(/([A-Z])/g, ' $1').trim() : 'Processing'}
-          </Text>
-        </View>
-        {progress > 0 && (
-          <Text style={styles.currentWorkProgress}>{progress}%</Text>
-        )}
-      </View>
-      <View style={styles.progressBar}>
-        <View style={[styles.progressFill, { width: `${progress}%` }]} />
-      </View>
-    </View>
-  );
-}
-
-// Backlog item card with remove button
-function BacklogItemCard({
-  item,
-  position,
-  onRemove,
-}: {
-  item: QueueItem;
-  position: number;
-  onRemove: () => void;
-}) {
-  return (
-    <View style={styles.backlogItem}>
-      <View style={styles.backlogPosition}>
-        <Text style={styles.backlogPositionText}>{position}</Text>
-      </View>
-      <View style={styles.backlogContent}>
-        <Text style={styles.backlogText} numberOfLines={1}>
-          {item.description}
-        </Text>
-        <Text style={styles.backlogMeta}>
-          Added {formatTime(item.createdAt)}
-        </Text>
-      </View>
-      <TouchableOpacity onPress={onRemove} style={styles.removeButton}>
-        <FontAwesome name="times" size={14} color={colors.text.muted} />
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-// Lifecycle item card (for human review and completed stages)
-function LifecycleItemCard({
-  item,
-  stage,
-}: {
-  item: QueueItem;
-  stage: 'review' | 'completed';
-}) {
-  const stageConfig = {
-    review: {
-      color: colors.accent.yellow,
-      icon: 'eye' as const,
-      label: 'Awaiting Review',
-    },
-    completed: {
-      color: colors.accent.green,
-      icon: 'check-circle' as const,
-      label: 'Completed',
-    },
-  };
-
-  const config = stageConfig[stage];
-
-  return (
-    <View style={[styles.lifecycleItem, { borderLeftColor: config.color }]}>
-      <View style={[styles.lifecycleIcon, { backgroundColor: config.color + '20' }]}>
-        <FontAwesome name={config.icon} size={14} color={config.color} />
-      </View>
-      <View style={styles.lifecycleContent}>
-        <Text style={styles.lifecycleText} numberOfLines={1}>
-          {item.description}
-        </Text>
-        <Text style={styles.lifecycleMeta}>{config.label}</Text>
-      </View>
-    </View>
-  );
-}
-
-// Log entry row
-function LogEntryRow({ log }: { log: LogEntry }) {
-  const levelColors: Record<string, string> = {
-    info: colors.accent.blue,
-    success: colors.accent.green,
-    warn: colors.accent.yellow,
-    error: colors.accent.red,
-  };
-
-  const levelIcons: Record<string, string> = {
-    info: 'info-circle',
-    success: 'check-circle',
-    warn: 'exclamation-triangle',
-    error: 'times-circle',
-  };
-
-  return (
-    <View style={styles.logEntry}>
-      <FontAwesome
-        name={levelIcons[log.level] as any}
-        size={12}
-        color={levelColors[log.level]}
-        style={styles.logIcon}
-      />
-      <Text style={styles.logMessage} numberOfLines={1}>
-        {log.message}
-      </Text>
-      <Text style={styles.logTime}>{formatTime(log.timestamp)}</Text>
-    </View>
-  );
-}
-
-// Add to backlog modal
-function AddToBacklogModal({
-  visible,
-  issues,
-  onClose,
-  onAdd,
-}: {
-  visible: boolean;
-  issues: Issue[];
-  onClose: () => void;
-  onAdd: (issueId: string) => void;
-}) {
-  const typeColors: Record<string, { bg: string; text: string }> = {
-    bug: { bg: colors.accent.red + '20', text: colors.accent.red },
-    feature: { bg: colors.accent.green + '20', text: colors.accent.green },
-    task: { bg: colors.accent.blue + '20', text: colors.accent.blue },
-    epic: { bg: colors.accent.purple + '20', text: colors.accent.purple },
-  };
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Add to Backlog</Text>
-            <TouchableOpacity onPress={onClose} style={styles.modalClose}>
-              <FontAwesome name="times" size={18} color={colors.text.secondary} />
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.modalList}>
-            {issues.length === 0 ? (
-              <View style={styles.modalEmpty}>
-                <Text style={styles.emptySectionText}>No open issues available</Text>
-              </View>
-            ) : (
-              issues.map((issue) => (
-                <TouchableOpacity
-                  key={issue.id}
-                  style={styles.issueOption}
-                  onPress={() => onAdd(issue.id)}
-                >
-                  <View style={[styles.typeBadge, { backgroundColor: typeColors[issue.type]?.bg }]}>
-                    <Text style={[styles.typeBadgeText, { color: typeColors[issue.type]?.text }]}>
-                      {issue.type}
-                    </Text>
-                  </View>
-                  <Text style={styles.issueOptionTitle} numberOfLines={2}>
-                    {issue.title}
-                  </Text>
-                </TouchableOpacity>
-              ))
-            )}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-function formatTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 const styles = StyleSheet.create({
@@ -780,132 +576,6 @@ const styles = StyleSheet.create({
     color: colors.text.muted,
     marginTop: spacing.xs,
   },
-  // Current work styles
-  currentWorkCard: {
-    backgroundColor: colors.bg.card,
-    padding: spacing.lg,
-    borderRadius: borderRadius.lg,
-    marginBottom: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.accent.green + '40',
-  },
-  currentWorkHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    marginBottom: spacing.md,
-  },
-  currentWorkIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  currentWorkInfo: {
-    flex: 1,
-  },
-  currentWorkTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.text.primary,
-  },
-  currentWorkPhase: {
-    fontSize: 13,
-    color: colors.accent.green,
-    textTransform: 'capitalize',
-  },
-  currentWorkProgress: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.accent.green,
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: colors.bg.tertiary,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.accent.green,
-    borderRadius: 2,
-  },
-  // Backlog styles
-  backlogItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.bg.card,
-    padding: spacing.md,
-    borderRadius: borderRadius.md,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: spacing.md,
-  },
-  backlogPosition: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.bg.tertiary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backlogPositionText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.text.secondary,
-  },
-  backlogContent: {
-    flex: 1,
-  },
-  backlogText: {
-    fontSize: 14,
-    color: colors.text.primary,
-    fontWeight: '500',
-  },
-  backlogMeta: {
-    fontSize: 11,
-    color: colors.text.muted,
-    marginTop: 2,
-  },
-  removeButton: {
-    padding: spacing.sm,
-    marginLeft: spacing.sm,
-  },
-  // Lifecycle styles (for review and completed stages)
-  lifecycleItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.bg.card,
-    padding: spacing.md,
-    borderRadius: borderRadius.md,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderLeftWidth: 3,
-    gap: spacing.md,
-  },
-  lifecycleIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  lifecycleContent: {
-    flex: 1,
-  },
-  lifecycleText: {
-    fontSize: 14,
-    color: colors.text.primary,
-    fontWeight: '500',
-  },
-  lifecycleMeta: {
-    fontSize: 11,
-    color: colors.text.muted,
-    marginTop: 2,
-  },
   // Log styles
   logsCard: {
     backgroundColor: colors.bg.card,
@@ -913,82 +583,6 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-  },
-  logEntry: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    gap: spacing.sm,
-  },
-  logIcon: {
-    width: 16,
-  },
-  logMessage: {
-    flex: 1,
-    fontSize: 12,
-    color: colors.text.secondary,
-  },
-  logTime: {
-    fontSize: 11,
-    color: colors.text.muted,
-  },
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: colors.bg.primary,
-    borderTopLeftRadius: borderRadius.xl,
-    borderTopRightRadius: borderRadius.xl,
-    maxHeight: '70%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.text.primary,
-  },
-  modalClose: {
-    padding: spacing.sm,
-  },
-  modalList: {
-    padding: spacing.lg,
-  },
-  modalEmpty: {
-    padding: spacing.xl,
-    alignItems: 'center',
-  },
-  issueOption: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.md,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  typeBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.sm,
-  },
-  typeBadgeText: {
-    fontSize: 11,
-    fontWeight: '500',
-    textTransform: 'capitalize',
-  },
-  issueOptionTitle: {
-    flex: 1,
-    fontSize: 14,
-    color: colors.text.primary,
   },
   // Empty state styles
   emptyState: {
@@ -1039,3 +633,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+
+export default function AutoBuildScreen() {
+  return (
+    <ScreenErrorBoundary screenName="Auto-Build" showGoBack={false}>
+      <AutoBuildScreenContent />
+    </ScreenErrorBoundary>
+  );
+}

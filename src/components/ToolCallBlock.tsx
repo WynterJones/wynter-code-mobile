@@ -8,8 +8,32 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { colors, spacing, borderRadius } from '@/src/theme';
 import type { ToolCall } from '@/src/types';
 
+// Valid FontAwesome icon names used in this component
+type ToolIconName =
+  | 'terminal'
+  | 'file-text-o'
+  | 'pencil'
+  | 'edit'
+  | 'search'
+  | 'folder-open-o'
+  | 'globe'
+  | 'list'
+  | 'rocket'
+  | 'book'
+  | 'cog'
+  | 'chevron-up'
+  | 'chevron-down'
+  | 'file-o'
+  | 'exclamation-triangle';
+
+interface ToolConfig {
+  icon: ToolIconName;
+  color: string;
+  label: string;
+}
+
 // Tool icons and colors mapping
-const TOOL_CONFIG: Record<string, { icon: string; color: string; label: string }> = {
+const TOOL_CONFIG: Record<string, ToolConfig> = {
   Bash: { icon: 'terminal', color: '#f9e2af', label: 'Terminal' },
   Read: { icon: 'file-text-o', color: '#a6e3a1', label: 'Read' },
   Write: { icon: 'pencil', color: '#cba6f7', label: 'Write' },
@@ -29,8 +53,10 @@ interface ToolCallBlockProps {
   onToggle?: () => void;
 }
 
+const DEFAULT_CONFIG: ToolConfig = { icon: 'cog', color: colors.text.secondary, label: 'Unknown' };
+
 export function ToolCallBlock({ tool, isExpanded = false, onToggle }: ToolCallBlockProps) {
-  const config = TOOL_CONFIG[tool.name] || { icon: 'cog', color: colors.text.secondary, label: tool.name };
+  const config = TOOL_CONFIG[tool.name] ?? { ...DEFAULT_CONFIG, label: tool.name };
   const statusColor = getStatusColor(tool.status);
 
   const inputSummary = getInputSummary(tool.name, tool.input);
@@ -40,7 +66,7 @@ export function ToolCallBlock({ tool, isExpanded = false, onToggle }: ToolCallBl
       <TouchableOpacity style={styles.header} onPress={onToggle} activeOpacity={0.7}>
         <View style={styles.headerLeft}>
           <View style={[styles.iconContainer, { backgroundColor: config.color + '20' }]}>
-            <FontAwesome name={config.icon as any} size={14} color={config.color} />
+            <FontAwesome name={config.icon} size={14} color={config.color} />
           </View>
           <Text style={styles.toolName}>{config.label}</Text>
           <View style={[styles.statusBadge, { backgroundColor: statusColor + '30' }]}>

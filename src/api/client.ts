@@ -1,89 +1,36 @@
 /**
  * API Client for wynter-code desktop connection
+ *
+ * This is the main entry point for all API calls. All domain-specific functionality
+ * has been extracted to separate modules, but everything is re-exported here to
+ * maintain backward compatibility with existing imports.
  */
-import { QueryClient } from '@tanstack/react-query';
-import type {
-  ApiResponse,
-  Workspace,
-  Project,
-  Issue,
-  CreateIssueInput,
-  UpdateIssueInput,
-  AutoBuildState,
-  ChatSession,
-  ChatMessage,
-  PairResponse,
-} from '../types';
-import { useConnectionStore } from '../stores/connectionStore';
+import type { PairResponse } from '../types';
 
-// Query client instance
-export const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 30000,
-      retry: 2,
-      refetchOnWindowFocus: false,
-    },
-  },
-});
+// ============================================================================
+// Re-export base infrastructure
+// ============================================================================
 
-// Base fetch with auth
-async function apiFetch<T>(
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const { connection } = useConnectionStore.getState();
+export { queryClient } from './base';
 
-  if (!connection.device) {
-    throw new Error('Not connected to desktop');
-  }
+// ============================================================================
+// Pairing and Health Check (no auth required)
+// ============================================================================
 
-  const { host, port, token } = connection.device;
-  const url = `http://${host}:${port}/api/v1${endpoint}`;
-
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-      ...options.headers,
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(error.error || `HTTP ${response.status}`);
-  }
-
-  // Handle empty responses (e.g., 200 OK with no body for PATCH/DELETE)
-  const contentLength = response.headers.get('content-length');
-  const contentType = response.headers.get('content-type');
-  if (contentLength === '0' || !contentType?.includes('application/json')) {
-    return undefined as T;
-  }
-
-  // Try to parse JSON, return undefined if empty
-  const text = await response.text();
-  if (!text || text.trim() === '') {
-    return undefined as T;
-  }
-
-  return JSON.parse(text);
-}
-
-// Pairing (no auth required)
 export async function pairWithDesktop(
   host: string,
   port: number,
   code: string
 ): Promise<PairResponse> {
-  const url = `http://${host}:${port}/api/v1/pair`;
+  const url = `https://${host}:${port}/api/v1/pair`;
 
   // Generate a unique device ID and name
   const deviceId = `mobile-${Date.now()}-${Math.random().toString(36).substring(7)}`;
   const deviceName = 'Wynter Code Mobile';
 
-  console.log('[pairWithDesktop] Pairing with:', url, 'code:', code, 'deviceId:', deviceId);
+  if (__DEV__) {
+    console.log('[pairWithDesktop] Initiating pairing');
+  }
 
   const response = await fetch(url, {
     method: 'POST',
@@ -95,11 +42,15 @@ export async function pairWithDesktop(
     }),
   });
 
-  console.log('[pairWithDesktop] Response status:', response.status);
+  if (__DEV__) {
+    console.log('[pairWithDesktop] Response status:', response.status);
+  }
 
   if (!response.ok) {
     const errorBody = await response.text();
-    console.error('[pairWithDesktop] Error response:', errorBody);
+    if (__DEV__) {
+      console.error('[pairWithDesktop] Error response:', errorBody);
+    }
     try {
       const error = JSON.parse(errorBody).error || 'Pairing failed';
       throw new Error(error);
@@ -109,7 +60,9 @@ export async function pairWithDesktop(
   }
 
   const data = await response.json();
-  console.log('[pairWithDesktop] Success:', data);
+  if (__DEV__) {
+    console.log('[pairWithDesktop] Success');
+  }
 
   // Return in expected format with device info
   return {
@@ -121,10 +74,11 @@ export async function pairWithDesktop(
   };
 }
 
-// Health check with timeout
 export async function pingDesktop(host: string, port: number): Promise<boolean> {
-  const url = `http://${host}:${port}/api/v1/ping`;
-  console.log('[pingDesktop] Attempting to reach:', url);
+  const url = `https://${host}:${port}/api/v1/ping`;
+  if (__DEV__) {
+    console.log('[pingDesktop] Checking desktop connection');
+  }
 
   // Create abort controller for timeout (AbortSignal.timeout not available in RN)
   const controller = new AbortController();
@@ -136,1150 +90,180 @@ export async function pingDesktop(host: string, port: number): Promise<boolean> 
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
-    console.log('[pingDesktop] Response status:', response.status);
+    if (__DEV__) {
+      console.log('[pingDesktop] Response status:', response.status);
+    }
     return response.ok;
   } catch (error) {
     clearTimeout(timeoutId);
-    console.error('[pingDesktop] Error:', error);
+    if (__DEV__) {
+      console.error('[pingDesktop] Error:', error);
+    }
     return false;
   }
 }
 
-// Workspaces & Projects
-export async function fetchWorkspaces(): Promise<Workspace[]> {
-  // API returns workspaces directly, not wrapped in ApiResponse
-  return apiFetch<Workspace[]>('/workspaces');
-}
+// ============================================================================
+// Re-export all domain APIs for backward compatibility
+// ============================================================================
 
-export async function fetchProjects(workspaceId: string): Promise<Project[]> {
-  // API returns projects directly, not wrapped in ApiResponse
-  return apiFetch<Project[]>(`/workspaces/${workspaceId}/projects`);
-}
+// Workspaces
+export {
+  fetchWorkspaces,
+  fetchProjects,
+  createWorkspace,
+  updateWorkspace,
+  deleteWorkspace,
+  createProject,
+  updateProject,
+  deleteProject,
+  netlifySetToken,
+  netlifyCheckAuth,
+  netlifyListSites,
+  netlifyCreateSite,
+  netlifyListDeploys,
+  netlifyDeploy,
+  netlifyRollback,
+} from './workspaces';
 
-// Workspace CRUD
-export interface CreateWorkspaceInput {
-  name: string;
-  color?: string;
-}
+export type {
+  CreateWorkspaceInput,
+  CreateWorkspaceResponse,
+  UpdateWorkspaceInput,
+  CreateProjectInput,
+  CreateProjectResponse,
+  UpdateProjectInput,
+  NetlifyAuthResponse,
+  NetlifySite,
+  NetlifyDeploy,
+  NetlifyDeployResponse,
+} from './workspaces';
 
-export interface CreateWorkspaceResponse {
-  id: string;
-  name: string;
-  color: string;
-}
+// Issues
+export {
+  fetchIssues,
+  createIssue,
+  updateIssue,
+  closeIssue,
+  fetchAutoBuildStatus,
+  startAutoBuild,
+  pauseAutoBuild,
+  stopAutoBuild,
+  addToAutoBuildQueue,
+  removeFromAutoBuildQueue,
+  fetchAutoBuildBacklog,
+} from './issues';
 
-export async function createWorkspace(input: CreateWorkspaceInput): Promise<CreateWorkspaceResponse> {
-  return apiFetch<CreateWorkspaceResponse>('/workspaces', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
-}
-
-export interface UpdateWorkspaceInput {
-  name?: string;
-  color?: string;
-}
-
-export async function updateWorkspace(workspaceId: string, input: UpdateWorkspaceInput): Promise<void> {
-  await apiFetch<void>(`/workspaces/${workspaceId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(input),
-  });
-}
-
-export async function deleteWorkspace(workspaceId: string): Promise<void> {
-  await apiFetch<void>(`/workspaces/${workspaceId}`, {
-    method: 'DELETE',
-  });
-}
-
-// Project CRUD
-export interface CreateProjectInput {
-  name: string;
-  path: string;
-  color?: string;
-}
-
-export interface CreateProjectResponse {
-  id: string;
-  name: string;
-  path: string;
-  workspaceId: string;
-}
-
-export async function createProject(workspaceId: string, input: CreateProjectInput): Promise<CreateProjectResponse> {
-  return apiFetch<CreateProjectResponse>(`/workspaces/${workspaceId}/projects`, {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
-}
-
-export interface UpdateProjectInput {
-  name?: string;
-  color?: string;
-}
-
-export async function updateProject(projectId: string, input: UpdateProjectInput): Promise<void> {
-  await apiFetch<void>(`/projects/${projectId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(input),
-  });
-}
-
-export async function deleteProject(projectId: string): Promise<void> {
-  await apiFetch<void>(`/projects/${projectId}`, {
-    method: 'DELETE',
-  });
-}
-
-// Netlify API
-export interface NetlifyAuthResponse {
-  authenticated: boolean;
-  user?: {
-    id: string;
-    email: string;
-    full_name?: string;
-    avatar_url?: string;
-  };
-}
-
-export interface NetlifySite {
-  id: string;
-  name: string;
-  url: string;
-  ssl_url: string;
-  admin_url: string;
-  created_at: string;
-  updated_at: string;
-  screenshot_url?: string;
-}
-
-export interface NetlifyDeploy {
-  id: string;
-  state: string; // 'ready' | 'building' | 'error' | 'enqueued'
-  created_at: string;
-  published_at?: string;
-  deploy_url: string;
-  deploy_ssl_url: string;
-  error_message?: string;
-}
-
-export async function netlifySetToken(token: string): Promise<NetlifyAuthResponse> {
-  return apiFetch<NetlifyAuthResponse>('/netlify/auth', {
-    method: 'POST',
-    body: JSON.stringify({ token }),
-  });
-}
-
-export async function netlifyCheckAuth(): Promise<NetlifyAuthResponse> {
-  return apiFetch<NetlifyAuthResponse>('/netlify/auth');
-}
-
-export async function netlifyListSites(): Promise<NetlifySite[]> {
-  return apiFetch<NetlifySite[]>('/netlify/sites');
-}
-
-export async function netlifyCreateSite(name: string): Promise<NetlifySite> {
-  return apiFetch<NetlifySite>('/netlify/sites', {
-    method: 'POST',
-    body: JSON.stringify({ name }),
-  });
-}
-
-export async function netlifyListDeploys(siteId: string): Promise<NetlifyDeploy[]> {
-  return apiFetch<NetlifyDeploy[]>(`/netlify/sites/${siteId}/deploys`);
-}
-
-export interface NetlifyDeployResponse {
-  deploy: NetlifyDeploy;
-}
-
-export async function netlifyDeploy(siteId: string, projectPath: string): Promise<NetlifyDeployResponse> {
-  return apiFetch<NetlifyDeployResponse>('/netlify/deploy', {
-    method: 'POST',
-    body: JSON.stringify({ site_id: siteId, project_path: projectPath }),
-  });
-}
-
-export async function netlifyRollback(siteId: string, deployId: string): Promise<NetlifyDeploy> {
-  return apiFetch<NetlifyDeploy>('/netlify/rollback', {
-    method: 'POST',
-    body: JSON.stringify({ site_id: siteId, deploy_id: deployId }),
-  });
-}
-
-// Issues (Beads) - Note: API expects project_path as query param
-// API returns snake_case, we need camelCase
-interface ApiIssue {
-  id: string;
-  title: string;
-  description?: string;
-  status: string;
-  issue_type: string;
-  priority: number;
-  parent_id?: string;
-  created_at: string;
-  updated_at: string;
-  closed_at?: string;
-  close_reason?: string;
-}
-
-function transformIssue(apiIssue: ApiIssue): Issue {
-  return {
-    id: apiIssue.id,
-    title: apiIssue.title,
-    description: apiIssue.description,
-    status: apiIssue.status as Issue['status'],
-    type: apiIssue.issue_type as Issue['type'],
-    priority: apiIssue.priority as Issue['priority'],
-    parentId: apiIssue.parent_id,
-    createdAt: apiIssue.created_at,
-    updatedAt: apiIssue.updated_at,
-    closedAt: apiIssue.closed_at,
-    closeReason: apiIssue.close_reason,
-  };
-}
-
-export async function fetchIssues(projectPath: string): Promise<Issue[]> {
-  const encodedPath = encodeURIComponent(projectPath);
-  const apiIssues = await apiFetch<ApiIssue[]>(
-    `/projects/current/beads?project_path=${encodedPath}`
-  );
-  return apiIssues.map(transformIssue);
-}
-
-export async function createIssue(
-  projectPath: string,
-  input: CreateIssueInput
-): Promise<Issue> {
-  const encodedPath = encodeURIComponent(projectPath);
-  const apiIssue = await apiFetch<ApiIssue>(
-    `/projects/current/beads?project_path=${encodedPath}`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        project_path: projectPath,
-        title: input.title,
-        issue_type: input.type,
-        priority: input.priority,
-        description: input.description,
-      }),
-    }
-  );
-  return transformIssue(apiIssue);
-}
-
-export async function updateIssue(
-  projectPath: string,
-  issueId: string,
-  input: UpdateIssueInput
-): Promise<Issue> {
-  const encodedPath = encodeURIComponent(projectPath);
-  const apiIssue = await apiFetch<ApiIssue>(
-    `/projects/current/beads/${issueId}?project_path=${encodedPath}`,
-    {
-      method: 'PATCH',
-      body: JSON.stringify({
-        project_path: projectPath,
-        ...input,
-        // Transform type back to issue_type for API
-        issue_type: input.type,
-        type: undefined,
-      }),
-    }
-  );
-  return transformIssue(apiIssue);
-}
-
-export async function closeIssue(
-  projectPath: string,
-  issueId: string,
-  reason: string
-): Promise<Issue> {
-  const encodedPath = encodeURIComponent(projectPath);
-  const apiIssue = await apiFetch<ApiIssue>(
-    `/projects/current/beads/${issueId}/close?project_path=${encodedPath}`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ project_path: projectPath, reason }),
-    }
-  );
-  return transformIssue(apiIssue);
-}
-
-// Auto-Build
-export async function fetchAutoBuildStatus(projectId: string): Promise<AutoBuildState> {
-  // API returns the state directly, not wrapped in ApiResponse
-  const response = await apiFetch<AutoBuildState>(
-    `/projects/${projectId}/autobuild/status`
-  );
-  return response || {
-    status: 'stopped',
-    workers: [],
-    queue: [],
-    humanReview: [],
-    completed: [],
-    logs: [],
-    progress: 0,
-  };
-}
-
-export async function startAutoBuild(projectId: string): Promise<void> {
-  await apiFetch(`/projects/${projectId}/autobuild/start`, { method: 'POST' });
-}
-
-export async function pauseAutoBuild(projectId: string): Promise<void> {
-  await apiFetch(`/projects/${projectId}/autobuild/pause`, { method: 'POST' });
-}
-
-export async function stopAutoBuild(projectId: string): Promise<void> {
-  await apiFetch(`/projects/${projectId}/autobuild/stop`, { method: 'POST' });
-}
-
-export async function addToAutoBuildQueue(projectId: string, issueId: string): Promise<void> {
-  await apiFetch(`/projects/${projectId}/autobuild/queue`, {
-    method: 'POST',
-    body: JSON.stringify({ issue_id: issueId }),
-  });
-}
-
-export async function removeFromAutoBuildQueue(projectId: string, issueId: string): Promise<void> {
-  await apiFetch(`/projects/${projectId}/autobuild/queue/${issueId}`, {
-    method: 'DELETE',
-  });
-}
-
-// Chat Sessions
-export async function fetchSessions(projectId: string): Promise<ChatSession[]> {
-  const response = await apiFetch<ApiResponse<ChatSession[]>>(
-    `/projects/${projectId}/sessions`
-  );
-  return response.data || [];
-}
-
-export async function fetchMessages(
-  projectId: string,
-  sessionId: string
-): Promise<ChatMessage[]> {
-  const response = await apiFetch<ApiResponse<ChatMessage[]>>(
-    `/projects/${projectId}/sessions/${sessionId}/messages`
-  );
-  return response.data || [];
-}
-
-export async function sendMessage(
-  projectId: string,
-  sessionId: string,
-  content: string
-): Promise<void> {
-  await apiFetch(`/projects/${projectId}/sessions/${sessionId}/messages`, {
-    method: 'POST',
-    body: JSON.stringify({ content }),
-  });
-}
-
-export async function approveToolCall(
-  projectId: string,
-  sessionId: string,
-  toolCallId: string
-): Promise<void> {
-  await apiFetch(
-    `/projects/${projectId}/sessions/${sessionId}/tools/${toolCallId}/approve`,
-    { method: 'POST' }
-  );
-}
-
-export async function rejectToolCall(
-  projectId: string,
-  sessionId: string,
-  toolCallId: string
-): Promise<void> {
-  await apiFetch(
-    `/projects/${projectId}/sessions/${sessionId}/tools/${toolCallId}/reject`,
-    { method: 'POST' }
-  );
-}
-
-// Mobile Chat - send message and stream response
-export interface MobileChatRequest {
-  provider: string;
-  model: string;
-  mode?: string; // 'normal' | 'plan' | 'auto'
-  message: string;
-  cwd?: string; // Working directory for CLI processes
-  session_id?: string; // Session ID for continuing conversations
-  history?: Array<{ role: string; content: string }>;
-}
-
-export interface MobileChatChunk {
-  type: 'content' | 'tool_start' | 'tool_result' | 'tool_error' | 'thinking' | 'done' | 'error';
-  content?: string;
-  tool_name?: string;
-  tool_id?: string;
-  tool_input?: Record<string, unknown>;
-  tool_output?: string;
-  tool_is_error?: boolean;
-  error?: string;
-  // File-related tools
-  file_path?: string;
-  // Bash-related
-  command?: string;
-  // Search-related
-  pattern?: string;
-  query?: string;
-}
-
-export async function sendMobileChatMessage(
-  request: MobileChatRequest,
-  onChunk: (chunk: MobileChatChunk) => void
-): Promise<void> {
-  const { connection } = useConnectionStore.getState();
-
-  if (!connection.device) {
-    throw new Error('Not connected to desktop');
-  }
-
-  const { host, port, token } = connection.device;
-  const url = `http://${host}:${port}/api/v1/mobile/chat`;
-
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', url);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-
-    let buffer = '';
-    let lastProcessedIndex = 0;
-
-    xhr.onprogress = () => {
-      // Get new data since last progress event
-      const newData = xhr.responseText.substring(lastProcessedIndex);
-      lastProcessedIndex = xhr.responseText.length;
-      buffer += newData;
-
-      // Process complete lines (SSE format)
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6).trim();
-          if (data === '[DONE]') {
-            onChunk({ type: 'done' });
-            return;
-          }
-          try {
-            const chunk: MobileChatChunk = JSON.parse(data);
-            onChunk(chunk);
-          } catch (e) {
-            console.error('[MobileChat] Failed to parse chunk:', data, e);
-          }
-        }
-      }
-    };
-
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        // Process any remaining data in buffer
-        if (buffer.trim()) {
-          const lines = buffer.split('\n');
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6).trim();
-              if (data === '[DONE]') {
-                onChunk({ type: 'done' });
-              } else {
-                try {
-                  const chunk: MobileChatChunk = JSON.parse(data);
-                  onChunk(chunk);
-                } catch (e) {
-                  console.error('[MobileChat] Failed to parse final chunk:', data, e);
-                }
-              }
-            }
-          }
-        }
-        onChunk({ type: 'done' });
-        resolve();
-      } else {
-        try {
-          const error = JSON.parse(xhr.responseText);
-          reject(new Error(error.error || `HTTP ${xhr.status}`));
-        } catch {
-          reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
-        }
-      }
-    };
-
-    xhr.onerror = () => {
-      reject(new Error('Network error'));
-    };
-
-    xhr.ontimeout = () => {
-      reject(new Error('Request timeout'));
-    };
-
-    xhr.send(JSON.stringify(request));
-  });
-}
-
-// Overwatch Services
-interface ApiOverwatchService {
-  id: string;
-  workspace_id: string;
-  provider: string;
-  name: string;
-  external_url?: string;
-  status?: string;
-  link_icon?: string;
-  link_color?: string;
-  enabled: boolean;
-  sort_order: number;
-  metrics?: Record<string, unknown>;
-  last_updated?: number;
-  error?: string;
-}
-
-function transformOverwatchService(api: ApiOverwatchService): import('../types').OverwatchService {
-  return {
-    id: api.id,
-    workspaceId: api.workspace_id,
-    provider: api.provider as import('../types').ServiceProvider,
-    name: api.name,
-    externalUrl: api.external_url,
-    status: api.status as import('../types').ServiceStatus,
-    linkIcon: api.link_icon,
-    linkColor: api.link_color,
-    enabled: api.enabled,
-    sortOrder: api.sort_order,
-    metrics: api.metrics,
-    lastUpdated: api.last_updated,
-    error: api.error,
-  };
-}
-
-export async function fetchOverwatchServices(workspaceId?: string): Promise<import('../types').OverwatchService[]> {
-  const params = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : '';
-  const response = await apiFetch<{ services: ApiOverwatchService[] }>(`/overwatch${params}`);
-  return response.services.map(transformOverwatchService);
-}
+export type {
+  FetchIssuesOptions,
+  AutoBuildBacklogItem,
+  AutoBuildBacklog,
+} from './issues';
 
 // Subscriptions
-interface ApiSubscription {
-  id: string;
-  workspace_id: string;
-  name: string;
-  url?: string;
-  favicon_url?: string;
-  monthly_cost: number;
-  billing_cycle: string;
-  currency: string;
-  category_id?: string;
-  notes?: string;
-  is_active: boolean;
-  sort_order: number;
-}
+export {
+  fetchOverwatchServices,
+  fetchSubscriptions,
+  getSubscription,
+  createSubscription,
+  updateSubscription,
+  deleteSubscription,
+  createSubscriptionCategory,
+  updateSubscriptionCategory,
+  deleteSubscriptionCategory,
+} from './subscriptions';
 
-interface ApiSubscriptionCategory {
-  id: string;
-  workspace_id: string;
-  name: string;
-  color?: string;
-  sort_order: number;
-}
+export type {
+  CreateSubscriptionInput,
+  UpdateSubscriptionInput,
+  CreateSubscriptionCategoryInput,
+  UpdateSubscriptionCategoryInput,
+} from './subscriptions';
 
-function transformSubscription(api: ApiSubscription): import('../types').Subscription {
-  return {
-    id: api.id,
-    workspaceId: api.workspace_id,
-    name: api.name,
-    url: api.url,
-    faviconUrl: api.favicon_url,
-    monthlyCost: api.monthly_cost,
-    billingCycle: api.billing_cycle as import('../types').BillingCycle,
-    currency: api.currency,
-    categoryId: api.category_id,
-    notes: api.notes,
-    isActive: api.is_active,
-    sortOrder: api.sort_order,
-  };
-}
+// Chat
+export {
+  fetchSessions,
+  fetchMessages,
+  sendMessage,
+  approveToolCall,
+  rejectToolCall,
+  sendMobileChatMessage,
+} from './chat';
 
-function transformSubscriptionCategory(api: ApiSubscriptionCategory): import('../types').SubscriptionCategory {
-  return {
-    id: api.id,
-    workspaceId: api.workspace_id,
-    name: api.name,
-    color: api.color,
-    sortOrder: api.sort_order,
-  };
-}
+export type {
+  MobileChatRequest,
+  MobileChatChunk,
+} from './chat';
 
-export async function fetchSubscriptions(workspaceId?: string): Promise<{
-  subscriptions: import('../types').Subscription[];
-  categories: import('../types').SubscriptionCategory[];
-}> {
-  const params = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : '';
-  const response = await apiFetch<{
-    subscriptions: ApiSubscription[];
-    categories: ApiSubscriptionCategory[];
-  }>(`/subscriptions${params}`);
-  return {
-    subscriptions: response.subscriptions.map(transformSubscription),
-    categories: response.categories.map(transformSubscriptionCategory),
-  };
-}
+// Features
+export {
+  // Bookmarks
+  fetchBookmarks,
+  createBookmark,
+  updateBookmark,
+  deleteBookmark,
+  createBookmarkCollection,
+  updateBookmarkCollection,
+  deleteBookmarkCollection,
+  // Docs
+  fetchDocsList,
+  fetchDocContent,
+  saveDocContent,
+  // Templates
+  fetchTemplates,
+  // Filesystem
+  fetchFilesystemBrowse,
+  createDirectory,
+  fetchHomeDirectory,
+  // Terminal
+  createTerminal,
+  writeTerminal,
+  closeTerminal,
+  // Preview
+  detectPreviewProject,
+  startPreview,
+  stopPreview,
+  fetchPreviewStatus,
+  fetchPreviewList,
+  // Tunnel
+  checkTunnel,
+  startTunnel,
+  stopTunnel,
+  fetchTunnelList,
+  // Farmwork
+  checkFarmworkInstalled,
+  // Kanban
+  fetchKanbanTasks,
+  createKanbanTask,
+  updateKanbanTask,
+  deleteKanbanTask,
+  moveKanbanTask,
+} from './features';
 
-// Subscription CRUD
-export interface CreateSubscriptionInput {
-  workspaceId: string;
-  name: string;
-  url?: string;
-  faviconUrl?: string;
-  monthlyCost: number;
-  billingCycle?: import('../types').BillingCycle;
-  currency?: string;
-  categoryId?: string;
-  notes?: string;
-  isActive?: boolean;
-}
-
-export interface UpdateSubscriptionInput {
-  name?: string;
-  url?: string;
-  faviconUrl?: string;
-  monthlyCost?: number;
-  billingCycle?: import('../types').BillingCycle;
-  currency?: string;
-  categoryId?: string | null;
-  notes?: string | null;
-  isActive?: boolean;
-  sortOrder?: number;
-}
-
-export async function getSubscription(id: string): Promise<import('../types').Subscription> {
-  const response = await apiFetch<ApiSubscription>(`/subscriptions/${id}`);
-  return transformSubscription(response);
-}
-
-export async function createSubscription(input: CreateSubscriptionInput): Promise<import('../types').Subscription> {
-  const response = await apiFetch<ApiSubscription>('/subscriptions', {
-    method: 'POST',
-    body: JSON.stringify({
-      workspace_id: input.workspaceId,
-      name: input.name,
-      url: input.url,
-      favicon_url: input.faviconUrl,
-      monthly_cost: input.monthlyCost,
-      billing_cycle: input.billingCycle,
-      currency: input.currency,
-      category_id: input.categoryId,
-      notes: input.notes,
-      is_active: input.isActive,
-    }),
-  });
-  return transformSubscription(response);
-}
-
-export async function updateSubscription(id: string, input: UpdateSubscriptionInput): Promise<void> {
-  await apiFetch<void>(`/subscriptions/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({
-      name: input.name,
-      url: input.url,
-      favicon_url: input.faviconUrl,
-      monthly_cost: input.monthlyCost,
-      billing_cycle: input.billingCycle,
-      currency: input.currency,
-      category_id: input.categoryId,
-      notes: input.notes,
-      is_active: input.isActive,
-      sort_order: input.sortOrder,
-    }),
-  });
-}
-
-export async function deleteSubscription(id: string): Promise<void> {
-  await apiFetch<void>(`/subscriptions/${id}`, {
-    method: 'DELETE',
-  });
-}
-
-// Subscription Category CRUD
-export interface CreateSubscriptionCategoryInput {
-  workspaceId: string;
-  name: string;
-  color?: string;
-}
-
-export interface UpdateSubscriptionCategoryInput {
-  name?: string;
-  color?: string | null;
-  sortOrder?: number;
-}
-
-export async function createSubscriptionCategory(input: CreateSubscriptionCategoryInput): Promise<import('../types').SubscriptionCategory> {
-  const response = await apiFetch<ApiSubscriptionCategory>('/subscriptions/categories', {
-    method: 'POST',
-    body: JSON.stringify({
-      workspace_id: input.workspaceId,
-      name: input.name,
-      color: input.color,
-    }),
-  });
-  return transformSubscriptionCategory(response);
-}
-
-export async function updateSubscriptionCategory(id: string, input: UpdateSubscriptionCategoryInput): Promise<void> {
-  await apiFetch<void>(`/subscriptions/categories/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({
-      name: input.name,
-      color: input.color,
-      sort_order: input.sortOrder,
-    }),
-  });
-}
-
-export async function deleteSubscriptionCategory(id: string): Promise<void> {
-  await apiFetch<void>(`/subscriptions/categories/${id}`, {
-    method: 'DELETE',
-  });
-}
-
-// Bookmarks
-interface ApiBookmark {
-  id: string;
-  url: string;
-  title: string;
-  description?: string;
-  favicon_url?: string;
-  collection_id?: string;
-  order: number;
-}
-
-interface ApiBookmarkCollection {
-  id: string;
-  name: string;
-  icon?: string;
-  color?: string;
-  order: number;
-}
-
-function transformBookmark(api: ApiBookmark): import('../types').Bookmark {
-  return {
-    id: api.id,
-    url: api.url,
-    title: api.title,
-    description: api.description,
-    faviconUrl: api.favicon_url,
-    collectionId: api.collection_id,
-    order: api.order,
-  };
-}
-
-function transformBookmarkCollection(api: ApiBookmarkCollection): import('../types').BookmarkCollection {
-  return {
-    id: api.id,
-    name: api.name,
-    icon: api.icon,
-    color: api.color,
-    order: api.order,
-  };
-}
-
-export async function fetchBookmarks(): Promise<{
-  bookmarks: import('../types').Bookmark[];
-  collections: import('../types').BookmarkCollection[];
-}> {
-  const response = await apiFetch<{
-    bookmarks: ApiBookmark[];
-    collections: ApiBookmarkCollection[];
-  }>('/bookmarks');
-  return {
-    bookmarks: response.bookmarks.map(transformBookmark),
-    collections: response.collections.map(transformBookmarkCollection),
-  };
-}
-
-// Bookmark CRUD
-export interface CreateBookmarkInput {
-  url: string;
-  title: string;
-  description?: string;
-  faviconUrl?: string;
-  collectionId?: string;
-}
-
-export async function createBookmark(input: CreateBookmarkInput): Promise<import('../types').Bookmark> {
-  const apiBookmark = await apiFetch<ApiBookmark>('/bookmarks', {
-    method: 'POST',
-    body: JSON.stringify({
-      url: input.url,
-      title: input.title,
-      description: input.description,
-      favicon_url: input.faviconUrl,
-      collection_id: input.collectionId,
-    }),
-  });
-  return transformBookmark(apiBookmark);
-}
-
-export interface UpdateBookmarkInput {
-  url?: string;
-  title?: string;
-  description?: string;
-  faviconUrl?: string;
-  collectionId?: string | null;
-  order?: number;
-}
-
-export async function updateBookmark(id: string, input: UpdateBookmarkInput): Promise<void> {
-  await apiFetch<void>(`/bookmarks/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({
-      url: input.url,
-      title: input.title,
-      description: input.description,
-      favicon_url: input.faviconUrl,
-      collection_id: input.collectionId,
-      order: input.order,
-    }),
-  });
-}
-
-export async function deleteBookmark(id: string): Promise<void> {
-  await apiFetch<void>(`/bookmarks/${id}`, {
-    method: 'DELETE',
-  });
-}
-
-// Bookmark Collection CRUD
-export interface CreateBookmarkCollectionInput {
-  name: string;
-  icon?: string;
-  color?: string;
-}
-
-export async function createBookmarkCollection(input: CreateBookmarkCollectionInput): Promise<import('../types').BookmarkCollection> {
-  const apiCollection = await apiFetch<ApiBookmarkCollection>('/bookmarks/collections', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: input.name,
-      icon: input.icon,
-      color: input.color,
-    }),
-  });
-  return transformBookmarkCollection(apiCollection);
-}
-
-export interface UpdateBookmarkCollectionInput {
-  name?: string;
-  icon?: string;
-  color?: string;
-  order?: number;
-}
-
-export async function updateBookmarkCollection(id: string, input: UpdateBookmarkCollectionInput): Promise<void> {
-  await apiFetch<void>(`/bookmarks/collections/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({
-      name: input.name,
-      icon: input.icon,
-      color: input.color,
-      order: input.order,
-    }),
-  });
-}
-
-export async function deleteBookmarkCollection(id: string): Promise<void> {
-  await apiFetch<void>(`/bookmarks/collections/${id}`, {
-    method: 'DELETE',
-  });
-}
-
-// Docs - List and view markdown files
-export interface DocFile {
-  name: string;
-  path: string;
-  folder?: string;
-  size: number;
-  modified?: number;
-}
-
-export interface DocsListResponse {
-  docs: DocFile[];
-}
-
-export interface DocsContentResponse {
-  content: string;
-  name: string;
-  path: string;
-}
-
-export async function fetchDocsList(projectPath: string): Promise<DocFile[]> {
-  const encodedPath = encodeURIComponent(projectPath);
-  const response = await apiFetch<DocsListResponse>(`/docs/list?project_path=${encodedPath}`);
-  return response.docs;
-}
-
-export async function fetchDocContent(projectPath: string, filePath: string): Promise<DocsContentResponse> {
-  const encodedProjectPath = encodeURIComponent(projectPath);
-  const encodedFilePath = encodeURIComponent(filePath);
-  return apiFetch<DocsContentResponse>(
-    `/docs/content?project_path=${encodedProjectPath}&file_path=${encodedFilePath}`
-  );
-}
-
-export async function saveDocContent(projectPath: string, filePath: string, content: string): Promise<void> {
-  await apiFetch<void>('/docs/save', {
-    method: 'POST',
-    body: JSON.stringify({
-      project_path: projectPath,
-      file_path: filePath,
-      content,
-    }),
-  });
-}
+export type {
+  CreateBookmarkInput,
+  UpdateBookmarkInput,
+  CreateBookmarkCollectionInput,
+  UpdateBookmarkCollectionInput,
+  DocFile,
+  DocsListResponse,
+  DocsContentResponse,
+  TemplatesResponse,
+  TerminalCreateRequest,
+  PreviewStartRequest,
+  FarmworkCheckResponse,
+} from './features';
 
 // ============================================================================
-// Templates API
-// ============================================================================
-
-export interface TemplatesResponse {
-  templates: import('../types').ProjectTemplate[];
-  categories: import('../types').CategoryInfo[];
-}
-
-export async function fetchTemplates(): Promise<TemplatesResponse> {
-  return apiFetch<TemplatesResponse>('/templates');
-}
-
-// ============================================================================
-// Filesystem API
-// ============================================================================
-
-export async function fetchFilesystemBrowse(path: string): Promise<import('../types').FilesystemBrowseResponse> {
-  const encodedPath = encodeURIComponent(path);
-  return apiFetch<import('../types').FilesystemBrowseResponse>(`/filesystem/browse?path=${encodedPath}`);
-}
-
-export async function createDirectory(path: string): Promise<{ path: string; created: boolean }> {
-  return apiFetch<{ path: string; created: boolean }>('/filesystem/mkdir', {
-    method: 'POST',
-    body: JSON.stringify({ path }),
-  });
-}
-
-export async function fetchHomeDirectory(): Promise<{ path: string }> {
-  return apiFetch<{ path: string }>('/filesystem/homedir');
-}
-
-// ============================================================================
-// Terminal API
-// ============================================================================
-
-export interface TerminalCreateRequest {
-  cwd: string;
-  cols?: number;
-  rows?: number;
-  shell?: string;
-}
-
-export async function createTerminal(request: TerminalCreateRequest): Promise<{ pty_id: string }> {
-  return apiFetch<{ pty_id: string }>('/terminal/create', {
-    method: 'POST',
-    body: JSON.stringify(request),
-  });
-}
-
-export async function writeTerminal(ptyId: string, data: string): Promise<void> {
-  await apiFetch<void>(`/terminal/${ptyId}/write`, {
-    method: 'POST',
-    body: JSON.stringify({ data }),
-  });
-}
-
-export async function closeTerminal(ptyId: string): Promise<void> {
-  await apiFetch<void>(`/terminal/${ptyId}`, {
-    method: 'DELETE',
-  });
-}
-
-// ============================================================================
-// Live Preview API
-// ============================================================================
-
-export async function detectPreviewProject(projectPath: string): Promise<import('../types').PreviewDetectResult> {
-  const encodedPath = encodeURIComponent(projectPath);
-  return apiFetch<import('../types').PreviewDetectResult>(`/preview/detect?project_path=${encodedPath}`);
-}
-
-export interface PreviewStartRequest {
-  projectPath: string;
-  port?: number;
-  useFrameworkServer?: boolean;
-}
-
-export async function startPreview(request: PreviewStartRequest): Promise<import('../types').PreviewStartResponse> {
-  return apiFetch<import('../types').PreviewStartResponse>('/preview/start', {
-    method: 'POST',
-    body: JSON.stringify({
-      project_path: request.projectPath,
-      port: request.port,
-      use_framework_server: request.useFrameworkServer,
-    }),
-  });
-}
-
-export async function stopPreview(serverId: string): Promise<void> {
-  await apiFetch<void>('/preview/stop', {
-    method: 'POST',
-    body: JSON.stringify({ server_id: serverId }),
-  });
-}
-
-export async function fetchPreviewStatus(serverId?: string): Promise<import('../types').PreviewServer | null> {
-  const params = serverId ? `?server_id=${serverId}` : '';
-  return apiFetch<import('../types').PreviewServer | null>(`/preview/status${params}`);
-}
-
-export async function fetchPreviewList(): Promise<import('../types').PreviewServer[]> {
-  return apiFetch<import('../types').PreviewServer[]>('/preview/list');
-}
-
-// ============================================================================
-// Tunnel API
-// ============================================================================
-
-export async function checkTunnel(): Promise<import('../types').TunnelCheckResult> {
-  return apiFetch<import('../types').TunnelCheckResult>('/tunnel/check');
-}
-
-export async function startTunnel(port: number): Promise<{ tunnelId: string }> {
-  return apiFetch<{ tunnelId: string }>('/tunnel/start', {
-    method: 'POST',
-    body: JSON.stringify({ port }),
-  });
-}
-
-export async function stopTunnel(tunnelId: string): Promise<void> {
-  await apiFetch<void>('/tunnel/stop', {
-    method: 'POST',
-    body: JSON.stringify({ tunnel_id: tunnelId }),
-  });
-}
-
-export async function fetchTunnelList(): Promise<import('../types').TunnelInfo[]> {
-  return apiFetch<import('../types').TunnelInfo[]>('/tunnel/list');
-}
-
-// ============================================================================
-// Farmwork API
-// ============================================================================
-
-export interface FarmworkCheckResponse {
-  installed: boolean;
-  config_path: string | null;
-}
-
-export async function checkFarmworkInstalled(projectPath: string): Promise<FarmworkCheckResponse> {
-  const encodedPath = encodeURIComponent(projectPath);
-  return apiFetch<FarmworkCheckResponse>(`/farmwork/check?project_path=${encodedPath}`);
-}
-
-// ============================================================================
-// Kanban Board API
-// ============================================================================
-
-interface ApiKanbanTask {
-  id: string;
-  title: string;
-  description?: string;
-  status: string;
-  priority: number;
-  created_at: number;
-  updated_at: number;
-  order: number;
-  locked: boolean;
-}
-
-function transformKanbanTask(api: ApiKanbanTask): import('../types').KanbanTask {
-  return {
-    id: api.id,
-    title: api.title,
-    description: api.description,
-    status: api.status as import('../types').KanbanStatus,
-    priority: api.priority as import('../types').KanbanPriority,
-    createdAt: api.created_at,
-    updatedAt: api.updated_at,
-    order: api.order,
-    locked: api.locked,
-  };
-}
-
-export async function fetchKanbanTasks(workspaceId: string): Promise<import('../types').KanbanTask[]> {
-  const tasks = await apiFetch<ApiKanbanTask[]>(`/kanban/${workspaceId}`);
-  return tasks.map(transformKanbanTask);
-}
-
-export async function createKanbanTask(
-  workspaceId: string,
-  input: import('../types').CreateKanbanTaskInput
-): Promise<import('../types').KanbanTask> {
-  const task = await apiFetch<ApiKanbanTask>(`/kanban/${workspaceId}/tasks`, {
-    method: 'POST',
-    body: JSON.stringify({
-      title: input.title,
-      description: input.description,
-      priority: input.priority,
-    }),
-  });
-  return transformKanbanTask(task);
-}
-
-export async function updateKanbanTask(
-  workspaceId: string,
-  taskId: string,
-  input: import('../types').UpdateKanbanTaskInput
-): Promise<void> {
-  await apiFetch<void>(`/kanban/${workspaceId}/tasks/${taskId}`, {
-    method: 'PATCH',
-    body: JSON.stringify({
-      title: input.title,
-      description: input.description,
-      priority: input.priority,
-      locked: input.locked,
-    }),
-  });
-}
-
-export async function deleteKanbanTask(workspaceId: string, taskId: string): Promise<void> {
-  await apiFetch<void>(`/kanban/${workspaceId}/tasks/${taskId}`, {
-    method: 'DELETE',
-  });
-}
-
-export async function moveKanbanTask(
-  workspaceId: string,
-  taskId: string,
-  input: import('../types').MoveKanbanTaskInput
-): Promise<void> {
-  await apiFetch<void>(`/kanban/${workspaceId}/tasks/${taskId}/move`, {
-    method: 'POST',
-    body: JSON.stringify({
-      status: input.status,
-      order: input.order,
-    }),
-  });
-}
-
 // Query Keys
+// ============================================================================
+
 export const queryKeys = {
   workspaces: ['workspaces'] as const,
   projects: (workspaceId: string) => ['projects', workspaceId] as const,
   issues: (projectId: string) => ['issues', projectId] as const,
   autoBuild: (projectId: string) => ['autobuild', projectId] as const,
+  autoBuildBacklog: (projectId: string) => ['autobuild-backlog', projectId] as const,
   sessions: (projectId: string) => ['sessions', projectId] as const,
   messages: (projectId: string, sessionId: string) =>
     ['messages', projectId, sessionId] as const,

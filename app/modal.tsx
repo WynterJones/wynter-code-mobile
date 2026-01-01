@@ -18,16 +18,86 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { colors, spacing, borderRadius } from '@/src/theme';
 import { useConnectionStore } from '@/src/stores';
 import { pairWithDesktop, pingDesktop } from '@/src/api/client';
+import { ScreenErrorBoundary } from '@/src/components/ScreenErrorBoundary';
 
 type Tab = 'qr' | 'manual';
 
-export default function ConnectModal() {
+// Validation helpers
+const VALID_PORT_MIN = 1;
+const VALID_PORT_MAX = 65535;
+const PAIRING_CODE_LENGTH = 6;
+
+// IPv4 pattern for local network addresses
+const IPV4_PATTERN = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+// Allowed local network ranges (private IPs only)
+const LOCAL_NETWORK_RANGES = [
+  { start: [10, 0, 0, 0], end: [10, 255, 255, 255] },      // 10.0.0.0/8
+  { start: [172, 16, 0, 0], end: [172, 31, 255, 255] },    // 172.16.0.0/12
+  { start: [192, 168, 0, 0], end: [192, 168, 255, 255] },  // 192.168.0.0/16
+  { start: [127, 0, 0, 0], end: [127, 255, 255, 255] },    // 127.0.0.0/8 (localhost)
+];
+
+function isValidPort(port: number): boolean {
+  return Number.isInteger(port) && port >= VALID_PORT_MIN && port <= VALID_PORT_MAX;
+}
+
+function isValidPairingCode(code: string): boolean {
+  return /^\d{6}$/.test(code);
+}
+
+function isLocalNetworkIP(host: string): boolean {
+  const match = host.match(IPV4_PATTERN);
+  if (!match) return false;
+
+  const octets = [
+    parseInt(match[1], 10),
+    parseInt(match[2], 10),
+    parseInt(match[3], 10),
+    parseInt(match[4], 10),
+  ];
+
+  // Validate each octet is 0-255
+  if (octets.some((o) => o < 0 || o > 255)) return false;
+
+  // Check if IP is in allowed local network ranges
+  return LOCAL_NETWORK_RANGES.some((range) => {
+    for (let i = 0; i < 4; i++) {
+      if (octets[i] < range.start[i] || octets[i] > range.end[i]) {
+        // Not in range, but need to check if earlier octet was less than end
+        if (i > 0 && octets[i - 1] > range.start[i - 1] && octets[i - 1] < range.end[i - 1]) {
+          continue;
+        }
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+function validatePairingData(host: string, port: number, code: string): string | null {
+  if (!isLocalNetworkIP(host)) {
+    return 'Invalid host address. Only local network IPs are allowed (192.168.x.x, 10.x.x.x, 172.16-31.x.x).';
+  }
+
+  if (!isValidPort(port)) {
+    return `Invalid port. Port must be between ${VALID_PORT_MIN} and ${VALID_PORT_MAX}.`;
+  }
+
+  if (!isValidPairingCode(code)) {
+    return 'Invalid pairing code. Code must be exactly 6 digits.';
+  }
+
+  return null;
+}
+
+function ConnectModalContent() {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('qr');
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [manualCode, setManualCode] = useState('');
-  const [manualHost, setManualHost] = useState(__DEV__ ? '192.168.2.252' : '');
+  const [manualHost, setManualHost] = useState('');
   const [manualPort, setManualPort] = useState('8765');
   const [isConnecting, setIsConnecting] = useState(false);
 
@@ -47,13 +117,26 @@ export default function ConnectModal() {
 
       const code = url.searchParams.get('code');
       const host = url.searchParams.get('host');
-      const port = url.searchParams.get('port');
+      const portStr = url.searchParams.get('port');
 
-      if (!code || !host || !port) {
+      if (!code || !host || !portStr) {
         throw new Error('Invalid QR code data');
       }
 
-      await connectWithCode(host, parseInt(port), code);
+      const port = parseInt(portStr, 10);
+      if (isNaN(port)) {
+        throw new Error('Invalid port number');
+      }
+
+      // Validate all pairing data
+      const validationError = validatePairingData(host, port, code);
+      if (validationError) {
+        Alert.alert('Invalid QR Code', validationError);
+        setScanned(false);
+        return;
+      }
+
+      await connectWithCode(host, port, code);
     } catch (error) {
       Alert.alert('Invalid QR Code', 'Please scan a valid wynter-code pairing QR code.');
       setScanned(false);
@@ -97,12 +180,23 @@ export default function ConnectModal() {
 
   // Handle manual connect
   const handleManualConnect = () => {
-    if (!manualHost.trim() || !manualCode.trim()) {
+    const host = manualHost.trim();
+    const code = manualCode.trim();
+    const port = parseInt(manualPort, 10) || 8765;
+
+    if (!host || !code) {
       Alert.alert('Missing Info', 'Please enter both host IP and pairing code.');
       return;
     }
 
-    connectWithCode(manualHost.trim(), parseInt(manualPort) || 8765, manualCode.trim());
+    // Validate all pairing data
+    const validationError = validatePairingData(host, port, code);
+    if (validationError) {
+      Alert.alert('Invalid Input', validationError);
+      return;
+    }
+
+    connectWithCode(host, port, code);
   };
 
   // Disconnect
@@ -515,3 +609,11 @@ const styles = StyleSheet.create({
     color: colors.accent.red,
   },
 });
+
+export default function ConnectModal() {
+  return (
+    <ScreenErrorBoundary screenName="Connect">
+      <ConnectModalContent />
+    </ScreenErrorBoundary>
+  );
+}

@@ -9,6 +9,12 @@ import { colors, spacing, borderRadius } from '../theme';
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
+  /** Name of the screen for logging purposes */
+  screenName?: string;
+  /** Callback when user presses "Go Back" - if provided, shows Go Back button */
+  onGoBack?: () => void;
+  /** Callback when an error is caught */
+  onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
 }
 
 interface State {
@@ -33,8 +39,15 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
     this.setState({ errorInfo });
-    // Log to error reporting service
-    console.error('ErrorBoundary caught error:', error, errorInfo);
+
+    // Log in development mode
+    if (__DEV__) {
+      const screenInfo = this.props.screenName ? ` in ${this.props.screenName}` : '';
+      console.error(`ErrorBoundary caught error${screenInfo}:`, error, errorInfo);
+    }
+
+    // Call optional error callback
+    this.props.onError?.(error, errorInfo);
   }
 
   handleRetry = (): void => {
@@ -43,6 +56,17 @@ export class ErrorBoundary extends Component<Props, State> {
       error: null,
       errorInfo: null,
     });
+  };
+
+  handleGoBack = (): void => {
+    // Reset error state first
+    this.setState({
+      hasError: false,
+      error: null,
+      errorInfo: null,
+    });
+    // Then navigate back
+    this.props.onGoBack?.();
   };
 
   render(): ReactNode {
@@ -58,7 +82,9 @@ export class ErrorBoundary extends Component<Props, State> {
           </View>
           <Text style={styles.title}>Something went wrong</Text>
           <Text style={styles.message}>
-            The app encountered an unexpected error. Please try again.
+            {this.props.screenName
+              ? `An error occurred in ${this.props.screenName}. Please try again.`
+              : 'The app encountered an unexpected error. Please try again.'}
           </Text>
 
           {__DEV__ && this.state.error && (
@@ -73,10 +99,19 @@ export class ErrorBoundary extends Component<Props, State> {
             </ScrollView>
           )}
 
-          <TouchableOpacity style={styles.retryButton} onPress={this.handleRetry}>
-            <FontAwesome name="refresh" size={16} color={colors.bg.primary} />
-            <Text style={styles.retryText}>Try Again</Text>
-          </TouchableOpacity>
+          <View style={styles.buttonRow}>
+            <TouchableOpacity style={styles.retryButton} onPress={this.handleRetry}>
+              <FontAwesome name="refresh" size={16} color={colors.bg.primary} />
+              <Text style={styles.retryText}>Try Again</Text>
+            </TouchableOpacity>
+
+            {this.props.onGoBack && (
+              <TouchableOpacity style={styles.backButton} onPress={this.handleGoBack}>
+                <FontAwesome name="arrow-left" size={16} color={colors.accent.purple} />
+                <Text style={styles.backText}>Go Back</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       );
     }
@@ -114,7 +149,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: spacing.xl,
     lineHeight: 22,
-    maxWidth: 280,
+    maxWidth: 300,
+    paddingHorizontal: spacing.md,
   },
   errorBox: {
     maxHeight: 200,
@@ -123,6 +159,8 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.md,
     padding: spacing.md,
     marginBottom: spacing.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   errorTitle: {
     fontSize: 14,
@@ -140,6 +178,11 @@ const styles = StyleSheet.create({
     color: colors.text.muted,
     fontFamily: 'monospace',
   },
+  buttonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
   retryButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -151,6 +194,22 @@ const styles = StyleSheet.create({
   },
   retryText: {
     color: colors.bg.primary,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bg.secondary,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.lg,
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.accent.purple + '50',
+  },
+  backText: {
+    color: colors.accent.purple,
     fontSize: 16,
     fontWeight: '600',
   },

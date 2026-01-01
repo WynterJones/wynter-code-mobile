@@ -221,8 +221,6 @@ export function XTermWebView({ ptyId, onReady, style }: XTermWebViewProps) {
           break;
 
         case 'resize':
-          // TODO: Send resize to backend if we add resize API
-          console.log('[XTermWebView] Terminal resized:', msg.cols, 'x', msg.rows);
           break;
       }
     } catch (err) {
@@ -303,7 +301,21 @@ export function XTermWebView({ ptyId, onReady, style }: XTermWebViewProps) {
         onError={handleError}
         javaScriptEnabled={true}
         domStorageEnabled={true}
-        originWhitelist={['*']}
+        // Restrict origins to only allow the inline HTML and trusted CDN
+        originWhitelist={['about:*', 'data:*']}
+        // Block navigation to any external URLs
+        onShouldStartLoadWithRequest={(request) => {
+          // Allow initial load of inline HTML
+          if (request.url.startsWith('about:') || request.url.startsWith('data:')) {
+            return true;
+          }
+          // Allow CDN resources for xterm.js
+          if (request.url.startsWith('https://cdn.jsdelivr.net/')) {
+            return true;
+          }
+          // Block all other navigation
+          return false;
+        }}
         scrollEnabled={false}
         bounces={false}
         keyboardDisplayRequiresUserAction={false}

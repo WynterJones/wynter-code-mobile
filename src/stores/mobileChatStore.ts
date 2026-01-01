@@ -7,6 +7,36 @@ import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import type { AIProvider, AIModel, AIMode, ToolCall } from '../types';
 
+// ============================================================================
+// Efficient Map Update Utilities
+// ============================================================================
+
+/**
+ * Efficiently updates a Map by mutating a copy only when necessary.
+ * Reduces allocations compared to creating a new Map on every update.
+ */
+function updateMap<K, V>(map: Map<K, V>, key: K, value: V): Map<K, V> {
+  const existing = map.get(key);
+  if (existing === value) {
+    return map;
+  }
+  const newMap = new Map(map);
+  newMap.set(key, value);
+  return newMap;
+}
+
+/**
+ * Efficiently deletes from a Map by mutating a copy only when necessary.
+ */
+function deleteFromMap<K, V>(map: Map<K, V>, key: K): Map<K, V> {
+  if (!map.has(key)) {
+    return map;
+  }
+  const newMap = new Map(map);
+  newMap.delete(key);
+  return newMap;
+}
+
 // Mobile-specific types
 export interface MobileChatSession {
   id: string;
@@ -95,6 +125,29 @@ const MESSAGES_KEY_PREFIX = 'mobile_chat_messages_';
 // Helper to get messages key for a session
 const getMessagesKey = (sessionId: string) => `${MESSAGES_KEY_PREFIX}${sessionId}`;
 
+// Debounce utility for persistence operations
+function debounce<T extends (...args: unknown[]) => Promise<void>>(
+  fn: T,
+  delay: number
+): T {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  return ((...args: unknown[]) => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    return new Promise<void>((resolve) => {
+      timeoutId = setTimeout(async () => {
+        await fn(...args);
+        resolve();
+      }, delay);
+    });
+  }) as T;
+}
+
+// Debounced persistence functions (300ms delay to batch rapid updates)
+let debouncedSaveSessionsImpl: (() => Promise<void>) | null = null;
+const debouncedSaveMessagesMap = new Map<string, () => Promise<void>>();
+
 export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
   sessions: [],
   selectedSessionId: null,
@@ -124,12 +177,18 @@ export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
   },
 
   saveSessions: async () => {
-    try {
-      const { sessions } = get();
-      await SecureStore.setItemAsync(SESSIONS_KEY, JSON.stringify(sessions));
-    } catch (error) {
-      console.error('[MobileChatStore] Failed to save sessions:', error);
+    // Use debounced save to batch rapid updates (e.g., during streaming)
+    if (!debouncedSaveSessionsImpl) {
+      debouncedSaveSessionsImpl = debounce(async () => {
+        try {
+          const { sessions } = get();
+          await SecureStore.setItemAsync(SESSIONS_KEY, JSON.stringify(sessions));
+        } catch (error) {
+          console.error('[MobileChatStore] Failed to save sessions:', error);
+        }
+      }, 300);
     }
+    await debouncedSaveSessionsImpl();
   },
 
   loadMessages: async (sessionId: string) => {
@@ -138,9 +197,7 @@ export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
       if (stored) {
         const messages: MobileChatMessage[] = JSON.parse(stored);
         const current = get().messages;
-        const updated = new Map(current);
-        updated.set(sessionId, messages);
-        set({ messages: updated });
+        set({ messages: updateMap(current, sessionId, messages) });
       }
     } catch (error) {
       console.error('[MobileChatStore] Failed to load messages:', error);
@@ -148,12 +205,21 @@ export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
   },
 
   saveMessages: async (sessionId: string) => {
-    try {
-      const messages = get().messages.get(sessionId) || [];
-      await SecureStore.setItemAsync(getMessagesKey(sessionId), JSON.stringify(messages));
-    } catch (error) {
-      console.error('[MobileChatStore] Failed to save messages:', error);
+    // Use debounced save per session to batch rapid updates (e.g., during streaming)
+    if (!debouncedSaveMessagesMap.has(sessionId)) {
+      debouncedSaveMessagesMap.set(
+        sessionId,
+        debounce(async () => {
+          try {
+            const messages = get().messages.get(sessionId) || [];
+            await SecureStore.setItemAsync(getMessagesKey(sessionId), JSON.stringify(messages));
+          } catch (error) {
+            console.error('[MobileChatStore] Failed to save messages:', error);
+          }
+        }, 300)
+      );
     }
+    await debouncedSaveMessagesMap.get(sessionId)!();
   },
 
   // Session CRUD
@@ -193,9 +259,8 @@ export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
     // Remove session
     const updatedSessions = sessions.filter((s) => s.id !== sessionId);
 
-    // Remove messages from memory
-    const updatedMessages = new Map(messages);
-    updatedMessages.delete(sessionId);
+    // Remove messages from memory using efficient utility
+    const updatedMessages = deleteFromMap(messages, sessionId);
 
     // Clear from SecureStore
     try {
@@ -225,10 +290,9 @@ export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
   // Message actions
   addMessage: (sessionId, message) => {
     const { messages, sessions, updateSession, saveMessages } = get();
-    const updated = new Map(messages);
-    const sessionMessages = updated.get(sessionId) || [];
-    updated.set(sessionId, [...sessionMessages, message]);
-    set({ messages: updated });
+    const sessionMessages = messages.get(sessionId) || [];
+    const newMessages = [...sessionMessages, message];
+    set({ messages: updateMap(messages, sessionId, newMessages) });
 
     // Update message count
     const session = sessions.find((s) => s.id === sessionId);
@@ -242,14 +306,16 @@ export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
 
   updateMessage: (sessionId, messageId, updates) => {
     const { messages, saveMessages } = get();
-    const updated = new Map(messages);
-    const sessionMessages = updated.get(sessionId) || [];
+    const sessionMessages = messages.get(sessionId) || [];
     const updatedMessages = sessionMessages.map((msg) =>
       msg.id === messageId ? { ...msg, ...updates } : msg
     );
-    updated.set(sessionId, updatedMessages);
-    set({ messages: updated });
-    saveMessages(sessionId);
+    // Only update if we actually changed something
+    const hasChanges = sessionMessages.some((msg, i) => msg !== updatedMessages[i]);
+    if (hasChanges) {
+      set({ messages: updateMap(messages, sessionId, updatedMessages) });
+      saveMessages(sessionId);
+    }
   },
 
   getSessionMessages: (sessionId) => {
@@ -365,30 +431,29 @@ export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
   // Tool calls
   addPendingToolCall: (toolCall) => {
     const current = get().pendingToolCalls;
-    const updated = new Map(current);
-    updated.set(toolCall.id, toolCall);
-    set({ pendingToolCalls: updated });
+    set({ pendingToolCalls: updateMap(current, toolCall.id, toolCall) });
   },
 
   updateToolCallStatus: (toolCallId, status) => {
     const { pendingToolCalls, messages, selectedSessionId, saveMessages } = get();
 
     // Update in pending map
-    const updated = new Map(pendingToolCalls);
-    const toolCall = updated.get(toolCallId);
+    const toolCall = pendingToolCalls.get(toolCallId);
     if (toolCall) {
-      updated.set(toolCallId, { ...toolCall, status });
-      if (status !== 'pending') {
-        updated.delete(toolCallId);
+      if (status === 'pending') {
+        set({ pendingToolCalls: updateMap(pendingToolCalls, toolCallId, { ...toolCall, status }) });
+      } else {
+        set({ pendingToolCalls: deleteFromMap(pendingToolCalls, toolCallId) });
       }
     }
-    set({ pendingToolCalls: updated });
 
     // Update in messages
     if (selectedSessionId) {
       const sessionMessages = messages.get(selectedSessionId) || [];
       const updatedMessages = sessionMessages.map((msg) => {
         if (!msg.toolCalls) return msg;
+        const hasToolCall = msg.toolCalls.some((tc) => tc.id === toolCallId);
+        if (!hasToolCall) return msg;
         return {
           ...msg,
           toolCalls: msg.toolCalls.map((tc) =>
@@ -396,18 +461,21 @@ export const useMobileChatStore = create<MobileChatStore>((set, get) => ({
           ),
         };
       });
-      const newMessages = new Map(messages);
-      newMessages.set(selectedSessionId, updatedMessages);
-      set({ messages: newMessages });
-      saveMessages(selectedSessionId);
+      // Only update if we actually changed something
+      const hasChanges = sessionMessages.some((msg, i) => msg !== updatedMessages[i]);
+      if (hasChanges) {
+        set({ messages: updateMap(messages, selectedSessionId, updatedMessages) });
+        saveMessages(selectedSessionId);
+      }
     }
   },
 
   removePendingToolCall: (toolCallId) => {
     const current = get().pendingToolCalls;
-    const updated = new Map(current);
-    updated.delete(toolCallId);
-    set({ pendingToolCalls: updated });
+    const updated = deleteFromMap(current, toolCallId);
+    if (updated !== current) {
+      set({ pendingToolCalls: updated });
+    }
   },
 
   // Computed

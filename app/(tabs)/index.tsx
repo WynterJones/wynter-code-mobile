@@ -17,9 +17,10 @@ import { useConnectionStore, useProjectStore } from '@/src/stores';
 import { useWorkspaces } from '@/src/api/hooks';
 import { BlueprintGrid } from '@/src/components/BlueprintGrid';
 import { GlassButton } from '@/src/components/GlassButton';
+import { ScreenErrorBoundary } from '@/src/components/ScreenErrorBoundary';
 import type { Workspace, Project } from '@/src/types';
 
-export default function ProjectsScreen() {
+function ProjectsScreenContent() {
   const router = useRouter();
   const connection = useConnectionStore((s) => s.connection);
   const { selectedProject, setWorkspaces, selectProject } = useProjectStore();
@@ -604,3 +605,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+
+export default function ProjectsScreen() {
+  return (
+    <ScreenErrorBoundary screenName="Projects" showGoBack={false}>
+      <ProjectsScreenContent />
+    </ScreenErrorBoundary>
+  );
+}
