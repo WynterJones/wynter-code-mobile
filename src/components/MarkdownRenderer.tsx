@@ -350,7 +350,7 @@ function getTokenStyle(style: string) {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    flexShrink: 1,
   },
   text: {
     color: colors.text.primary,

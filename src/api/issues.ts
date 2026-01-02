@@ -112,21 +112,105 @@ export async function closeIssue(
   return transformIssue(apiIssue);
 }
 
-// Auto-Build
+// Auto-Build API response (snake_case from server)
+interface ApiAutoBuildStatus {
+  status: string;
+  current_issue_id?: string;
+  current_phase?: string;
+  progress?: number;
+  workers?: Array<{
+    id: string | number;
+    issue_id?: string;
+    status?: string;
+    current_task?: string;
+    progress?: number;
+  }>;
+  queue?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    created_at: string;
+  }>;
+  human_review?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    created_at: string;
+  }>;
+  completed?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    created_at: string;
+  }>;
+  logs?: Array<{
+    id: string;
+    level: string;
+    message: string;
+    timestamp: string;
+  }>;
+  error?: string;
+}
+
+// Transform snake_case API response to camelCase AutoBuildState
+function transformApiAutoBuildStatus(api: ApiAutoBuildStatus): AutoBuildState {
+  return {
+    status: (api.status === 'idle' ? 'stopped' : api.status) as AutoBuildState['status'],
+    currentIssueId: api.current_issue_id,
+    currentPhase: api.current_phase as AutoBuildState['currentPhase'],
+    progress: api.progress ?? 0,
+    workers: (api.workers ?? []).map((w) => ({
+      id: String(w.id),
+      status: (w.status ?? 'idle') as 'idle' | 'working' | 'done' | 'error',
+      currentTask: w.current_task,
+      progress: w.progress ?? 0,
+    })),
+    queue: (api.queue ?? []).map((q) => ({
+      id: q.id,
+      description: q.title,
+      status: q.status as 'pending' | 'processing' | 'completed',
+      createdAt: q.created_at,
+    })),
+    humanReview: (api.human_review ?? []).map((h) => ({
+      id: h.id,
+      description: h.title,
+      status: h.status as 'pending' | 'processing' | 'completed',
+      createdAt: h.created_at,
+    })),
+    completed: (api.completed ?? []).map((c) => ({
+      id: c.id,
+      description: c.title,
+      status: c.status as 'pending' | 'processing' | 'completed',
+      createdAt: c.created_at,
+    })),
+    logs: (api.logs ?? []).map((l) => ({
+      id: l.id,
+      level: l.level as 'info' | 'success' | 'warn' | 'error',
+      message: l.message,
+      timestamp: l.timestamp,
+    })),
+  };
+}
+
 export async function fetchAutoBuildStatus(projectId: string): Promise<AutoBuildState> {
-  // API returns the state directly, not wrapped in ApiResponse
-  const response = await apiFetch<AutoBuildState>(
+  // API returns the state in snake_case format
+  const response = await apiFetch<ApiAutoBuildStatus>(
     `/projects/${projectId}/autobuild/status`
   );
-  return response || {
-    status: 'stopped',
-    workers: [],
-    queue: [],
-    humanReview: [],
-    completed: [],
-    logs: [],
-    progress: 0,
-  };
+
+  if (!response) {
+    return {
+      status: 'stopped',
+      workers: [],
+      queue: [],
+      humanReview: [],
+      completed: [],
+      logs: [],
+      progress: 0,
+    };
+  }
+
+  return transformApiAutoBuildStatus(response);
 }
 
 export async function startAutoBuild(projectId: string): Promise<void> {

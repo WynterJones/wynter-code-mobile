@@ -179,33 +179,33 @@ function transformAutoBuildStateToUpdate(state: AutoBuildState): AutoBuildUpdate
     status: state.status === 'stopped' ? 'idle' : state.status as 'idle' | 'running' | 'paused' | 'error',
     current_issue_id: state.currentIssueId,
     current_phase: state.currentPhase,
-    progress: state.progress,
-    workers: state.workers.map((w, index) => ({
+    progress: state.progress ?? 0,
+    workers: (state.workers ?? []).map((w, index) => ({
       id: typeof w.id === 'string' ? index : (w.id as unknown as number),
       issue_id: (w as { issueId?: string }).issueId,
       phase: w.status,
       current_action: w.currentTask,
       progress: w.progress,
     })),
-    queue: state.queue.map((q) => ({
+    queue: (state.queue ?? []).map((q) => ({
       id: q.id,
       title: q.description,
       status: q.status,
       created_at: q.createdAt,
     })),
-    human_review: state.humanReview.map((h) => ({
+    human_review: (state.humanReview ?? []).map((h) => ({
       id: h.id,
       title: h.description,
       status: h.status,
       created_at: h.createdAt,
     })),
-    completed: state.completed.map((c) => ({
+    completed: (state.completed ?? []).map((c) => ({
       id: c.id,
       title: c.description,
       status: c.status,
       created_at: c.createdAt,
     })),
-    logs: state.logs.map((l) => ({
+    logs: (state.logs ?? []).map((l) => ({
       id: l.id,
       level: l.level,
       message: l.message,

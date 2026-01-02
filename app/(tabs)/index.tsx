@@ -40,8 +40,7 @@ function ProjectsScreenContent() {
   useEffect(() => {
     if (workspaces.length > 0) {
       setWorkspaces(workspaces);
-      // Auto-expand all workspaces initially
-      setExpandedWorkspaces(new Set(workspaces.map(ws => ws.id)));
+      // All workspaces start collapsed
     }
   }, [workspaces, setWorkspaces]);
 
@@ -73,8 +72,9 @@ function ProjectsScreenContent() {
     return workspaces.reduce((sum, ws) => sum + ws.projects.length, 0);
   }, [workspaces]);
 
-  // Not connected state
-  if (!connection.device) {
+  // Not connected state - check both WiFi and Relay modes
+  const isConnected = connection.device || connection.relayConfig;
+  if (!isConnected) {
     return (
       <View style={styles.container}>
         <BlueprintGrid>
@@ -142,7 +142,15 @@ function ProjectsScreenContent() {
         <View style={styles.headerTop}>
           <TouchableOpacity style={styles.connectionBadge} onPress={() => router.push('/modal')}>
             <View style={styles.connectionDot} />
-            <Text style={styles.connectionText}>Connection</Text>
+            <FontAwesome
+              name={connection.connectionMode === 'relay' ? 'lock' : 'wifi'}
+              size={12}
+              color={colors.accent.green}
+              style={{ marginRight: 4 }}
+            />
+            <Text style={styles.connectionText}>
+              {connection.connectionMode === 'relay' ? 'Relay' : 'WiFi'}
+            </Text>
           </TouchableOpacity>
         </View>
 

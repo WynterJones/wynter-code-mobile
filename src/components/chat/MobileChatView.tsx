@@ -164,7 +164,8 @@ export function MobileChatView({ session, onBack }: MobileChatViewProps) {
     } catch (error) {
       console.error('[MobileChat] Send error:', error);
       endStreaming();
-      Alert.alert('Error', 'Failed to send message. Check your connection.');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to send message. Check your connection.';
+      Alert.alert('Error', errorMessage);
     } finally {
       setIsSending(false);
     }
@@ -265,11 +266,10 @@ export function MobileChatView({ session, onBack }: MobileChatViewProps) {
         maxToRenderPerBatch={15}
         windowSize={7}
         initialNumToRender={15}
-        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
       />
 
-      {/* Input */}
-      <View style={[styles.inputContainer, { paddingBottom: spacing.md + insets.bottom + 60 }]}>
+      {/* Input - needs padding for tab bar (85px) */}
+      <View style={[styles.inputContainer, { paddingBottom: 85 + spacing.sm }]}>
         <TextInput
           style={styles.input}
           value={inputText}
@@ -382,7 +382,8 @@ const styles = StyleSheet.create({
   },
   messageListContent: {
     padding: spacing.md,
-    paddingBottom: 100,
+    paddingBottom: spacing.md,
+    flexGrow: 1,
   },
   emptyChat: {
     alignItems: 'center',

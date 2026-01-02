@@ -22,7 +22,7 @@ export async function pairWithDesktop(
   port: number,
   code: string
 ): Promise<PairResponse> {
-  const url = `https://${host}:${port}/api/v1/pair`;
+  const url = `http://${host}:${port}/api/v1/pair`;
 
   // Generate a unique device ID and name
   const deviceId = `mobile-${Date.now()}-${Math.random().toString(36).substring(7)}`;
@@ -75,7 +75,7 @@ export async function pairWithDesktop(
 }
 
 export async function pingDesktop(host: string, port: number): Promise<boolean> {
-  const url = `https://${host}:${port}/api/v1/ping`;
+  const url = `http://${host}:${port}/api/v1/ping`;
   if (__DEV__) {
     console.log('[pingDesktop] Checking desktop connection');
   }

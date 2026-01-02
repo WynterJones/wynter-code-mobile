@@ -108,7 +108,7 @@ export const ChatMessageSchema = z.object({
     id: z.string(),
     name: z.string(),
     status: z.enum(['pending', 'approved', 'rejected', 'completed', 'error']),
-    input: z.record(z.unknown()).optional(),
+    input: z.record(z.string(), z.unknown()).optional(),
     output: z.string().optional(),
   })).optional(),
 });
@@ -169,7 +169,7 @@ export const ApiOverwatchServiceSchema = z.object({
   link_color: z.string().optional(),
   enabled: z.boolean(),
   sort_order: z.number(),
-  metrics: z.record(z.unknown()).optional(),
+  metrics: z.record(z.string(), z.unknown()).optional(),
   last_updated: z.number().optional(),
   error: z.string().optional(),
 });

@@ -7,6 +7,7 @@ import {
   Image,
   ScrollView,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import * as Haptics from 'expo-haptics';
@@ -15,39 +16,8 @@ import { useQuery } from '@tanstack/react-query';
 
 import { colors, spacing, borderRadius } from '@/src/theme';
 import { useProjectStore, useConnectionStore } from '@/src/stores';
-
-interface FarmworkStats {
-  audit_scores: {
-    security: AuditMetadata;
-    tests: AuditMetadata;
-    performance: AuditMetadata;
-    accessibility: AuditMetadata;
-    code_quality: AuditMetadata;
-    farmhouse: AuditMetadata;
-  };
-  garden_stats: {
-    active_ideas: number;
-    planted: number;
-    growing: number;
-    picked: number;
-  };
-  compost_stats: {
-    rejected_ideas: number;
-  };
-  beads_stats?: {
-    total: number;
-    open: number;
-    in_progress: number;
-    closed: number;
-  };
-}
-
-interface AuditMetadata {
-  score: number;
-  open_items: Array<{ priority: string; text: string }>;
-  last_updated?: string;
-  status?: string;
-}
+import { useIsConnected } from '@/src/api/hooks';
+import { fetchFarmworkStats, type FarmworkStats, type AuditMetadata } from '@/src/api/features';
 
 function ScoreCard({ title, icon, score, color }: { title: string; icon: string; score: number; color: string }) {
   // Score is out of 10, not percentage
@@ -83,29 +53,15 @@ function StatCard({ label, value, icon, color }: { label: string; value: number;
 }
 
 export default function FarmworkScreen() {
+  const isConnected = useIsConnected();
   const connection = useConnectionStore((s) => s.connection);
   const selectedProject = useProjectStore((s) => s.selectedProject);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchStats = async (): Promise<FarmworkStats | null> => {
-    if (!connection.device || !selectedProject?.path) return null;
-
-    const { host, port, token } = connection.device;
-    const params = new URLSearchParams({ project_path: selectedProject.path });
-    const url = `http://${host}:${port}/api/v1/farmwork/stats?${params}`;
-
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!response.ok) throw new Error('Failed to fetch stats');
-    return response.json();
-  };
-
   const { data: stats, isLoading, error, refetch } = useQuery({
     queryKey: ['farmwork-stats', selectedProject?.path],
-    queryFn: fetchStats,
-    enabled: !!connection.device && !!selectedProject?.path,
+    queryFn: () => fetchFarmworkStats(selectedProject?.path ?? ''),
+    enabled: isConnected && !!selectedProject?.path,
     staleTime: 60000,
   });
 
@@ -117,7 +73,18 @@ export default function FarmworkScreen() {
   };
 
   const openInBrowser = async () => {
-    if (!connection.device || !selectedProject?.path) return;
+    // Full visualizer only works in WiFi mode (needs direct browser access)
+    if (!connection.device || !selectedProject?.path) {
+      if (connection.connectionMode === 'relay') {
+        Alert.alert(
+          'Not Available',
+          'The full Farmwork visualizer requires a direct WiFi connection to your desktop.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+      return;
+    }
 
     const { host, port, token } = connection.device;
     const params = new URLSearchParams({
@@ -133,7 +100,7 @@ export default function FarmworkScreen() {
   };
 
   // Not connected state
-  if (!connection.device) {
+  if (!isConnected) {
     return (
       <View style={styles.container}>
         <View style={styles.emptyState}>
@@ -296,11 +263,13 @@ export default function FarmworkScreen() {
           </>
         ) : null}
 
-        {/* Open Full View Button */}
-        <TouchableOpacity style={styles.openButton} onPress={openInBrowser}>
-          <FontAwesome name="external-link" size={16} color={colors.bg.primary} />
-          <Text style={styles.openButtonText}>Open Full Visualizer</Text>
-        </TouchableOpacity>
+        {/* Open Full View Button - only show in WiFi mode */}
+        {connection.connectionMode === 'wifi' && connection.device && (
+          <TouchableOpacity style={styles.openButton} onPress={openInBrowser}>
+            <FontAwesome name="external-link" size={16} color={colors.bg.primary} />
+            <Text style={styles.openButtonText}>Open Full Visualizer</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
     </View>
   );

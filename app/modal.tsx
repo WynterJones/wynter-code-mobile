@@ -19,6 +19,13 @@ import { colors, spacing, borderRadius } from '@/src/theme';
 import { useConnectionStore } from '@/src/stores';
 import { pairWithDesktop, pingDesktop } from '@/src/api/client';
 import { ScreenErrorBoundary } from '@/src/components/ScreenErrorBoundary';
+import { isValidRelayUrl } from '@/src/api/validation';
+import {
+  generateKeyPair,
+  deriveSharedKey,
+  exportPublicKey,
+  importPublicKey,
+} from '@/src/api/relayCrypto';
 
 type Tab = 'qr' | 'manual';
 
@@ -101,7 +108,7 @@ function ConnectModalContent() {
   const [manualPort, setManualPort] = useState('8765');
   const [isConnecting, setIsConnecting] = useState(false);
 
-  const { connection, saveDevice, clearDevice, setStatus } = useConnectionStore();
+  const { connection, saveDevice, clearDevice, setStatus, saveRelayConfig } = useConnectionStore();
 
   // Handle QR code scan
   const handleBarCodeScanned = async ({ data }: { data: string }) => {
@@ -109,38 +116,122 @@ function ConnectModalContent() {
     setScanned(true);
 
     try {
-      // Parse wynter://pair?code=123456&host=192.168.1.x&port=8765
+      // Parse wynter://pair?mode=wifi|relay&...
       const url = new URL(data);
       if (url.protocol !== 'wynter:' || url.hostname !== 'pair') {
         throw new Error('Invalid QR code');
       }
 
-      const code = url.searchParams.get('code');
-      const host = url.searchParams.get('host');
-      const portStr = url.searchParams.get('port');
+      const mode = url.searchParams.get('mode') || 'wifi';
 
-      if (!code || !host || !portStr) {
-        throw new Error('Invalid QR code data');
+      if (mode === 'relay') {
+        // Relay mode: wynter://pair?mode=relay&relay=wss://...&desktop_id=...&pubkey=...&token=...
+        await handleRelayPairing(url);
+      } else {
+        // WiFi mode: wynter://pair?mode=wifi&code=123456&host=192.168.1.x&port=8765
+        await handleWifiPairing(url);
       }
-
-      const port = parseInt(portStr, 10);
-      if (isNaN(port)) {
-        throw new Error('Invalid port number');
-      }
-
-      // Validate all pairing data
-      const validationError = validatePairingData(host, port, code);
-      if (validationError) {
-        Alert.alert('Invalid QR Code', validationError);
-        setScanned(false);
-        return;
-      }
-
-      await connectWithCode(host, port, code);
     } catch (error) {
-      Alert.alert('Invalid QR Code', 'Please scan a valid wynter-code pairing QR code.');
+      const message = error instanceof Error ? error.message : 'Invalid QR code';
+      Alert.alert('Invalid QR Code', message);
       setScanned(false);
     }
+  };
+
+  // Handle WiFi mode pairing
+  const handleWifiPairing = async (url: URL) => {
+    const code = url.searchParams.get('code');
+    const host = url.searchParams.get('host');
+    const portStr = url.searchParams.get('port');
+
+    if (!code || !host || !portStr) {
+      throw new Error('Invalid QR code data');
+    }
+
+    const port = parseInt(portStr, 10);
+    if (isNaN(port)) {
+      throw new Error('Invalid port number');
+    }
+
+    // Validate all pairing data
+    const validationError = validatePairingData(host, port, code);
+    if (validationError) {
+      Alert.alert('Invalid QR Code', validationError);
+      setScanned(false);
+      return;
+    }
+
+    await connectWithCode(host, port, code);
+  };
+
+  // Handle Relay mode pairing
+  const handleRelayPairing = async (url: URL) => {
+    const relayUrl = url.searchParams.get('relay');
+    const desktopId = url.searchParams.get('desktop_id');
+    const desktopPubkey = url.searchParams.get('pubkey');
+    const token = url.searchParams.get('token');
+
+    if (!relayUrl || !desktopId || !desktopPubkey || !token) {
+      throw new Error('Missing relay pairing data');
+    }
+
+    // Validate relay URL
+    if (!isValidRelayUrl(relayUrl)) {
+      throw new Error('Invalid relay URL. Must be wss://');
+    }
+
+    setIsConnecting(true);
+    setStatus('connecting');
+
+    try {
+      // Generate our X25519 key pair
+      const keyPair = generateKeyPair();
+      const mobileId = generateMobileId();
+
+      // Import desktop's public key
+      const peerPublicKey = importPublicKey(desktopPubkey);
+
+      // Derive shared encryption key
+      const encryptionKey = deriveSharedKey(keyPair.privateKey, peerPublicKey);
+
+      // Save relay configuration
+      await saveRelayConfig({
+        url: relayUrl,
+        desktopId,
+        mobileId,
+        publicKey: exportPublicKey(keyPair.publicKey),
+        privateKey: uint8ArrayToBase64(keyPair.privateKey),
+        peerPublicKey: desktopPubkey,
+        token,
+      });
+
+      router.back();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to configure relay';
+      Alert.alert('Relay Setup Failed', message);
+      setStatus('error', message);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  // Generate a unique mobile device ID
+  const generateMobileId = (): string => {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let result = 'mobile_';
+    for (let i = 0; i < 12; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  };
+
+  // Base64 helper
+  const uint8ArrayToBase64 = (bytes: Uint8Array): string => {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
   };
 
   // Connect with pairing code
@@ -199,23 +290,41 @@ function ConnectModalContent() {
     connectWithCode(host, port, code);
   };
 
+  const { clearRelayConfig } = useConnectionStore();
+
   // Disconnect
   const handleDisconnect = async () => {
-    Alert.alert('Disconnect', 'Are you sure you want to disconnect from this device?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Disconnect',
-        style: 'destructive',
-        onPress: async () => {
-          await clearDevice();
-          router.back();
+    const isRelayMode = connection.connectionMode === 'relay';
+    Alert.alert(
+      'Disconnect',
+      isRelayMode
+        ? 'Are you sure you want to disconnect from the relay?'
+        : 'Are you sure you want to disconnect from this device?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: async () => {
+            if (isRelayMode) {
+              await clearRelayConfig();
+            } else {
+              await clearDevice();
+            }
+            router.back();
+          },
         },
-      },
-    ]);
+      ]
+    );
   };
 
+  // Check if connected (either WiFi or Relay mode)
+  const isConnected = connection.device || connection.relayConfig;
+
   // If connected, show device info
-  if (connection.device) {
+  if (isConnected) {
+    const isRelayMode = connection.connectionMode === 'relay';
+
     return (
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.header}>
@@ -227,21 +336,52 @@ function ConnectModalContent() {
 
         <View style={styles.connectedCard}>
           <View style={styles.connectedIcon}>
-            <FontAwesome name="desktop" size={32} color={colors.accent.green} />
+            <FontAwesome
+              name={isRelayMode ? 'cloud' : 'desktop'}
+              size={32}
+              color={colors.accent.green}
+            />
           </View>
           <Text style={styles.connectedTitle}>Connected</Text>
-          <Text style={styles.deviceName}>{connection.device.name}</Text>
-          <Text style={styles.deviceInfo}>
-            {connection.device.host}:{connection.device.port}
-          </Text>
-          <Text style={styles.pairedAt}>
-            Paired {new Date(connection.device.pairedAt).toLocaleDateString()}
-          </Text>
+
+          {/* Connection mode badge */}
+          <View style={[styles.modeBadge, isRelayMode && styles.modeBadgeRelay]}>
+            <FontAwesome
+              name={isRelayMode ? 'lock' : 'wifi'}
+              size={12}
+              color={isRelayMode ? colors.accent.purple : colors.accent.blue}
+            />
+            <Text style={[styles.modeBadgeText, isRelayMode && styles.modeBadgeTextRelay]}>
+              {isRelayMode ? 'Relay (Encrypted)' : 'WiFi (Local)'}
+            </Text>
+          </View>
+
+          {isRelayMode && connection.relayConfig ? (
+            <>
+              <Text style={styles.deviceName}>Relay Connection</Text>
+              <Text style={styles.deviceInfo}>
+                {new URL(connection.relayConfig.url).hostname}
+              </Text>
+              <Text style={styles.pairedAt}>
+                Desktop ID: {connection.relayConfig.desktopId.slice(0, 8)}...
+              </Text>
+            </>
+          ) : connection.device ? (
+            <>
+              <Text style={styles.deviceName}>{connection.device.name}</Text>
+              <Text style={styles.deviceInfo}>
+                {connection.device.host}:{connection.device.port}
+              </Text>
+              <Text style={styles.pairedAt}>
+                Paired {new Date(connection.device.pairedAt).toLocaleDateString()}
+              </Text>
+            </>
+          ) : null}
         </View>
 
         <TouchableOpacity style={styles.disconnectButton} onPress={handleDisconnect}>
           <FontAwesome name="unlink" size={16} color={colors.accent.red} />
-          <Text style={styles.disconnectText}>Disconnect Device</Text>
+          <Text style={styles.disconnectText}>Disconnect</Text>
         </TouchableOpacity>
       </ScrollView>
     );
@@ -576,6 +716,27 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.accent.green,
     marginBottom: spacing.sm,
+  },
+  modeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.accent.blue + '15',
+    borderRadius: borderRadius.full,
+    marginBottom: spacing.md,
+  },
+  modeBadgeRelay: {
+    backgroundColor: colors.accent.purple + '15',
+  },
+  modeBadgeText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.accent.blue,
+  },
+  modeBadgeTextRelay: {
+    color: colors.accent.purple,
   },
   deviceName: {
     fontSize: 18,

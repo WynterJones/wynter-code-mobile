@@ -350,6 +350,44 @@ export async function checkFarmworkInstalled(projectPath: string): Promise<Farmw
   return apiFetch<FarmworkCheckResponse>(`/farmwork/check?project_path=${encodedPath}`);
 }
 
+export interface AuditMetadata {
+  score: number;
+  open_items: Array<{ priority: string; text: string }>;
+  last_updated?: string;
+  status?: string;
+}
+
+export interface FarmworkStats {
+  audit_scores: {
+    security: AuditMetadata;
+    tests: AuditMetadata;
+    performance: AuditMetadata;
+    accessibility: AuditMetadata;
+    code_quality: AuditMetadata;
+    farmhouse: AuditMetadata;
+  };
+  garden_stats: {
+    active_ideas: number;
+    planted: number;
+    growing: number;
+    picked: number;
+  };
+  compost_stats: {
+    rejected_ideas: number;
+  };
+  beads_stats?: {
+    total: number;
+    open: number;
+    in_progress: number;
+    closed: number;
+  };
+}
+
+export async function fetchFarmworkStats(projectPath: string): Promise<FarmworkStats | null> {
+  const encodedPath = encodeURIComponent(projectPath);
+  return apiFetch<FarmworkStats | null>(`/farmwork/stats?project_path=${encodedPath}`);
+}
+
 // ============================================================================
 // Kanban Board API
 // ============================================================================

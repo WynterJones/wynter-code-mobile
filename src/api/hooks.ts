@@ -15,11 +15,12 @@ import { useProjectStore } from '../stores/projectStore';
 // ============================================================================
 
 /**
- * Hook to check if we're connected to desktop
+ * Hook to check if we're connected to desktop (WiFi or Relay mode)
  */
 export function useIsConnected() {
   const connection = useConnectionStore((s) => s.connection);
-  return connection.device !== null;
+  // Connected if we have either WiFi device OR relay config
+  return connection.device !== null || connection.relayConfig !== null;
 }
 
 /**

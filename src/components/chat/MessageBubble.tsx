@@ -19,6 +19,8 @@ export const MessageBubble = memo(function MessageBubble({
   const isUser = message.role === 'user';
   const isStreaming = message.isStreaming;
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
+  const hasContent = message.content && message.content.trim().length > 0;
+  const hasToolCalls = message.toolCalls && message.toolCalls.length > 0;
 
   const toggleTool = (toolId: string) => {
     setExpandedTools((prev) => {
@@ -32,10 +34,15 @@ export const MessageBubble = memo(function MessageBubble({
     });
   };
 
+  // Don't render empty bubbles (no content, not streaming, no tool calls)
+  if (!hasContent && !isStreaming && !hasToolCalls) {
+    return null;
+  }
+
   return (
     <View style={styles.container}>
       <View style={[styles.bubble, isUser ? styles.userBubble : styles.assistantBubble]}>
-        {message.content ? (
+        {hasContent ? (
           isUser ? (
             <Text style={[styles.messageText, styles.userText]}>{message.content}</Text>
           ) : (

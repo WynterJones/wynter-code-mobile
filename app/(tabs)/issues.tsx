@@ -16,8 +16,8 @@ import { useRouter } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 import { colors, spacing, borderRadius } from '@/src/theme';
-import { useProjectStore, useBeadsStore, useConnectionStore } from '@/src/stores';
-import { useIssues, useCreateIssue, useUpdateIssue, useCloseIssue } from '@/src/api/hooks';
+import { useProjectStore, useBeadsStore } from '@/src/stores';
+import { useIssues, useCreateIssue, useUpdateIssue, useCloseIssue, useIsConnected } from '@/src/api/hooks';
 import { BlueprintGrid } from '@/src/components/BlueprintGrid';
 import { GlassButton } from '@/src/components/GlassButton';
 import { ScreenErrorBoundary } from '@/src/components/ScreenErrorBoundary';
@@ -30,7 +30,7 @@ type TypeFilter = 'all' | IssueType;
 
 function IssuesScreenContent() {
   const router = useRouter();
-  const connection = useConnectionStore((s) => s.connection);
+  const isConnected = useIsConnected();
   const selectedProject = useProjectStore((s) => s.selectedProject);
   const { selectedIssue, selectIssue } = useBeadsStore();
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -83,7 +83,7 @@ function IssuesScreenContent() {
   }), [issues]);
 
   // Not connected state
-  if (!connection.device) {
+  if (!isConnected) {
     return (
       <View style={styles.container}>
         <BlueprintGrid>

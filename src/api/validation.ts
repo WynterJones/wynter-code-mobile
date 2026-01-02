@@ -96,9 +96,19 @@ export function isValidPort(port: number): boolean {
 /**
  * Validate host and port before making network requests.
  * Throws an error if validation fails.
+ *
+ * @param host - The host to validate
+ * @param port - The port to validate
+ * @param skipLocalNetworkCheck - If true, skips the private IP validation (for relay mode)
  */
-export function validateNetworkEndpoint(host: string, port: number): void {
-  if (!isValidLocalNetworkHost(host)) {
+export function validateNetworkEndpoint(
+  host: string,
+  port: number,
+  skipLocalNetworkCheck = false
+): void {
+  // For relay mode, we don't validate the host as a local network IP
+  // The relay URL can be any valid HTTPS endpoint
+  if (!skipLocalNetworkCheck && !isValidLocalNetworkHost(host)) {
     throw new Error(
       'Security Error: Invalid host address. Only local network IPs are allowed.'
     );
@@ -108,5 +118,19 @@ export function validateNetworkEndpoint(host: string, port: number): void {
     throw new Error(
       'Security Error: Invalid port number. Port must be between 1 and 65535.'
     );
+  }
+}
+
+/**
+ * Validate a relay server URL
+ * Must be wss:// (secure WebSocket)
+ */
+export function isValidRelayUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    // Only allow secure WebSocket connections
+    return parsed.protocol === 'wss:';
+  } catch {
+    return false;
   }
 }

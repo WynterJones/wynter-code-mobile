@@ -1,8 +1,21 @@
 /**
  * WebSocket client for real-time updates from desktop
+ *
+ * Supports two modes:
+ * - WiFi: Direct WebSocket connection to desktop on local network
+ * - Relay: Encrypted WebSocket through relay server
  */
 import { useConnectionStore } from '../stores/connectionStore';
 import { validateNetworkEndpoint } from './validation';
+
+// Lazy-loaded relay module (to avoid loading crypto at startup)
+let relayModule: typeof import('./relay') | null = null;
+function getRelayModule(): typeof import('./relay') {
+  if (!relayModule) {
+    relayModule = require('./relay') as typeof import('./relay');
+  }
+  return relayModule!;
+}
 
 // State update types from desktop
 export interface BeadsUpdate {
@@ -165,16 +178,26 @@ class WebSocketManager {
   private isAuthenticated = false;
   private pendingToken: string | null = null;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
+  private usingRelayMode = false;
 
   /**
    * Connect to the desktop WebSocket
+   * Automatically chooses WiFi or Relay mode based on connection settings
    */
   connect(): void {
+    const { connection, getEncryptionKey } = useConnectionStore.getState();
+
+    // Check if we should use relay mode
+    if (connection.connectionMode === 'relay' && connection.relayConfig) {
+      this.connectViaRelay();
+      return;
+    }
+
+    // WiFi mode - direct connection
     if (this.ws?.readyState === WebSocket.OPEN || this.isConnecting) {
       return;
     }
 
-    const { connection } = useConnectionStore.getState();
     if (!connection.device) {
       if (__DEV__) {
         console.warn('[WS] No device connected, cannot establish WebSocket');
@@ -197,13 +220,14 @@ class WebSocketManager {
 
     // SECURITY: Do NOT include token in URL - it would be logged in server logs,
     // browser history, and proxy logs. Send via message after connection instead.
-    const wsUrl = `wss://${host}:${port}/api/v1/ws`;
+    const wsUrl = `ws://${host}:${port}/api/v1/ws`;
     this.pendingToken = token;
 
     this.isConnecting = true;
     this.isAuthenticated = false;
+    this.usingRelayMode = false;
     if (__DEV__) {
-      console.log('[WS] Connecting to WebSocket');
+      console.log('[WS] Connecting to WebSocket (WiFi mode)');
     }
 
     try {
@@ -291,9 +315,69 @@ class WebSocketManager {
   }
 
   /**
+   * Connect via relay server (encrypted)
+   */
+  private connectViaRelay(): void {
+    const { connection, getEncryptionKey } = useConnectionStore.getState();
+
+    if (!connection.relayConfig) {
+      if (__DEV__) {
+        console.warn('[WS] No relay config, cannot connect via relay');
+      }
+      return;
+    }
+
+    const encryptionKey = getEncryptionKey();
+    if (!encryptionKey) {
+      if (__DEV__) {
+        console.error('[WS] Failed to derive encryption key for relay');
+      }
+      useConnectionStore.getState().setStatus('error', 'Failed to derive encryption key');
+      return;
+    }
+
+    this.usingRelayMode = true;
+
+    // Forward our handlers to the relay manager
+    const removeHandler = getRelayModule().relayWsManager.addHandler((update) => {
+      this.notifyHandlers(update);
+    });
+
+    // Store the cleanup function (will be called on disconnect)
+    this.relayHandlerCleanup = removeHandler;
+
+    // Connect via relay
+    getRelayModule().relayWsManager.connect({
+      relayUrl: connection.relayConfig.url,
+      mobileId: connection.relayConfig.mobileId,
+      desktopId: connection.relayConfig.desktopId,
+      encryptionKey,
+      token: connection.relayConfig.token,
+      publicKey: connection.relayConfig.publicKey,
+    });
+
+    if (__DEV__) {
+      console.log('[WS] Connecting via relay server');
+    }
+  }
+
+  private relayHandlerCleanup: (() => void) | null = null;
+
+  /**
    * Disconnect from the WebSocket
    */
   disconnect(): void {
+    // Clean up relay handler if we were using relay mode
+    if (this.relayHandlerCleanup) {
+      this.relayHandlerCleanup();
+      this.relayHandlerCleanup = null;
+    }
+
+    if (this.usingRelayMode) {
+      getRelayModule().relayWsManager.disconnect();
+      this.usingRelayMode = false;
+    }
+
     this.stopPingInterval();
     if (this.ws) {
       this.ws.close();
@@ -309,6 +393,12 @@ class WebSocketManager {
    * Send a command to the desktop
    */
   send(command: { type: string; [key: string]: unknown }): void {
+    // Route through relay if using relay mode
+    if (this.usingRelayMode) {
+      getRelayModule().relayWsManager.send(command);
+      return;
+    }
+
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(command));
     } else {
@@ -322,6 +412,10 @@ class WebSocketManager {
    * Subscribe to a project's updates
    */
   subscribeToProject(projectId: string): void {
+    if (this.usingRelayMode) {
+      getRelayModule().relayWsManager.subscribeToProject(projectId);
+      return;
+    }
     this.send({
       type: 'subscribe_project',
       project_id: projectId,
@@ -332,6 +426,10 @@ class WebSocketManager {
    * Approve a tool call
    */
   approveToolCall(sessionId: string, toolCallId: string): void {
+    if (this.usingRelayMode) {
+      getRelayModule().relayWsManager.approveToolCall(sessionId, toolCallId);
+      return;
+    }
     this.send({
       type: 'tool_approve',
       session_id: sessionId,
@@ -343,6 +441,10 @@ class WebSocketManager {
    * Reject a tool call
    */
   rejectToolCall(sessionId: string, toolCallId: string): void {
+    if (this.usingRelayMode) {
+      getRelayModule().relayWsManager.rejectToolCall(sessionId, toolCallId);
+      return;
+    }
     this.send({
       type: 'tool_reject',
       session_id: sessionId,
@@ -364,7 +466,17 @@ class WebSocketManager {
    * Get connection status (includes authentication check)
    */
   isConnected(): boolean {
+    if (this.usingRelayMode) {
+      return getRelayModule().relayWsManager.isConnected();
+    }
     return this.ws?.readyState === WebSocket.OPEN && this.isAuthenticated;
+  }
+
+  /**
+   * Check if currently using relay mode
+   */
+  isRelayMode(): boolean {
+    return this.usingRelayMode;
   }
 
   private notifyHandlers(update: StateUpdate): void {

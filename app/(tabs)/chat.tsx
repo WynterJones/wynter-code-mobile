@@ -13,7 +13,8 @@ import { useRouter } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 import { colors, spacing, borderRadius } from '@/src/theme';
-import { useConnectionStore, useMobileChatStore } from '@/src/stores';
+import { useMobileChatStore } from '@/src/stores';
+import { useIsConnected } from '@/src/api/hooks';
 import { BlueprintGrid } from '@/src/components/BlueprintGrid';
 import { GlassButton } from '@/src/components/GlassButton';
 import { ScreenErrorBoundary } from '@/src/components/ScreenErrorBoundary';
@@ -25,7 +26,7 @@ import {
 
 function ChatScreenContent() {
   const router = useRouter();
-  const connection = useConnectionStore((s) => s.connection);
+  const isConnected = useIsConnected();
   const {
     sessions,
     selectedSessionId,
@@ -48,7 +49,7 @@ function ChatScreenContent() {
     await loadSessions();
   }, [loadSessions]);
 
-  if (!connection.device) {
+  if (!isConnected) {
     return (
       <View style={styles.container}>
         <BlueprintGrid>

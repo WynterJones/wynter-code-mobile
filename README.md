@@ -334,4 +334,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Related Projects
 
-- [Wynter Code](https://github.com/wyntercode/wynter-code) - Desktop application
+- [Wynter Code](https://github.com/WynterJones/wynter-code) - Desktop application
+- [Wynter Code Relay](https://github.com/WynterJones/wynter-code-relay) - Relay server for remote connectivity

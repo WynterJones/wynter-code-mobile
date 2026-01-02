@@ -1,16 +1,52 @@
+// Polyfill crypto.getRandomValues - MUST be first import
+import '@/src/polyfills/crypto';
+
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { ThemeProvider, DarkTheme } from '@react-navigation/native';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { TouchableOpacity, Text, StyleSheet } from 'react-native';
 import 'react-native-reanimated';
 
-import { colors } from '@/src/theme';
+import { colors, spacing, borderRadius } from '@/src/theme';
 import { useConnectionStore } from '@/src/stores';
 import { queryClient } from '@/src/api/client';
 import { ErrorBoundary } from '@/src/components/ErrorBoundary';
+
+function BackButton() {
+  const router = useRouter();
+  return (
+    <TouchableOpacity
+      onPress={() => router.back()}
+      style={backStyles.button}
+      activeOpacity={0.7}
+    >
+      <FontAwesome name="chevron-left" size={14} color={colors.text.primary} />
+      <Text style={backStyles.label}>Home</Text>
+    </TouchableOpacity>
+  );
+}
+
+const backStyles = StyleSheet.create({
+  button: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bg.tertiary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.full,
+    gap: spacing.xs,
+    marginLeft: spacing.sm,
+  },
+  label: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: colors.text.primary,
+  },
+});
 
 // Re-export for expo-router
 export { ErrorBoundary };
@@ -84,7 +120,8 @@ export default function RootLayout() {
               title: 'Farmwork',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
-              headerBackTitle: 'Home',
+              headerLeft: () => <BackButton />,
+              headerBackVisible: false,
             }}
           />
           <Stack.Screen
@@ -93,7 +130,8 @@ export default function RootLayout() {
               title: 'Overwatch',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
-              headerBackTitle: 'Home',
+              headerLeft: () => <BackButton />,
+              headerBackVisible: false,
             }}
           />
           <Stack.Screen
@@ -102,7 +140,8 @@ export default function RootLayout() {
               title: 'Subscriptions',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
-              headerBackTitle: 'Home',
+              headerLeft: () => <BackButton />,
+              headerBackVisible: false,
             }}
           />
           <Stack.Screen
@@ -111,7 +150,8 @@ export default function RootLayout() {
               title: 'Bookmarks',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
-              headerBackTitle: 'Home',
+              headerLeft: () => <BackButton />,
+              headerBackVisible: false,
             }}
           />
           <Stack.Screen
@@ -120,7 +160,8 @@ export default function RootLayout() {
               title: 'Manage Workspaces',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
-              headerBackTitle: 'Home',
+              headerLeft: () => <BackButton />,
+              headerBackVisible: false,
             }}
           />
           <Stack.Screen
@@ -129,7 +170,8 @@ export default function RootLayout() {
               title: 'Deploy to Netlify',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
-              headerBackTitle: 'Home',
+              headerLeft: () => <BackButton />,
+              headerBackVisible: false,
             }}
           />
           <Stack.Screen
@@ -138,7 +180,8 @@ export default function RootLayout() {
               title: 'Documentation',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
-              headerBackTitle: 'Home',
+              headerLeft: () => <BackButton />,
+              headerBackVisible: false,
             }}
           />
           <Stack.Screen
@@ -147,7 +190,8 @@ export default function RootLayout() {
               title: 'New Project',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
-              headerBackTitle: 'Home',
+              headerLeft: () => <BackButton />,
+              headerBackVisible: false,
             }}
           />
           <Stack.Screen
@@ -156,7 +200,8 @@ export default function RootLayout() {
               title: 'Live Preview',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
-              headerBackTitle: 'Home',
+              headerLeft: () => <BackButton />,
+              headerBackVisible: false,
             }}
           />
           <Stack.Screen
@@ -165,7 +210,8 @@ export default function RootLayout() {
               title: '',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
-              headerBackTitle: 'Home',
+              headerLeft: () => <BackButton />,
+              headerBackVisible: false,
             }}
           />
           <Stack.Screen
@@ -174,7 +220,8 @@ export default function RootLayout() {
               title: 'The Board',
               headerStyle: { backgroundColor: colors.bg.secondary },
               headerTintColor: colors.text.primary,
-              headerBackTitle: 'Home',
+              headerLeft: () => <BackButton />,
+              headerBackVisible: false,
             }}
           />
         </Stack>

@@ -18,9 +18,8 @@ import Markdown from 'react-native-markdown-display';
 import * as Haptics from 'expo-haptics';
 
 import { colors, spacing, borderRadius } from '@/src/theme';
-import { useDocs, useDocContent } from '@/src/api/hooks';
+import { useDocs, useDocContent, useIsConnected } from '@/src/api/hooks';
 import { useProjectStore } from '@/src/stores/projectStore';
-import { useConnectionStore } from '@/src/stores';
 import type { DocFile } from '@/src/api/client';
 import { saveDocContent } from '@/src/api/client';
 
@@ -438,7 +437,7 @@ function DocEditor({
 export default function DocsScreen() {
   const navigation = useNavigation();
   const params = useLocalSearchParams<{ file?: string }>();
-  const { connection } = useConnectionStore();
+  const isConnected = useIsConnected();
   const selectedProject = useProjectStore((s) => s.selectedProject);
 
   const [selectedDoc, setSelectedDoc] = useState<DocFile | null>(null);
@@ -497,8 +496,6 @@ export default function DocsScreen() {
 
     return unsubscribe;
   }, [hasChanges, selectedDoc, navigation]);
-
-  const isConnected = connection.device !== null;
 
   // Save document
   const handleSave = async () => {

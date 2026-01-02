@@ -93,6 +93,16 @@ export async function sendMobileChatMessage(
 ): Promise<void> {
   const { connection, clearDevice, setStatus } = useConnectionStore.getState();
 
+  // Check if connected
+  if (!connection.device && !connection.relayConfig) {
+    throw new Error('Not connected to desktop');
+  }
+
+  // Chat streaming is not supported over relay mode (requires direct HTTP connection for SSE)
+  if (connection.connectionMode === 'relay') {
+    throw new Error('Mobile chat is not available in relay mode. Please connect via WiFi on the same network as your desktop.');
+  }
+
   if (!connection.device) {
     throw new Error('Not connected to desktop');
   }

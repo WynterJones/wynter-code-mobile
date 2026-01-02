@@ -13,7 +13,7 @@ import { useRouter } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 import { colors, spacing, borderRadius } from '@/src/theme';
-import { useProjectStore, useConnectionStore, useAutoBuildStore } from '@/src/stores';
+import { useProjectStore, useAutoBuildStore } from '@/src/stores';
 import {
   useAutoBuildStatus,
   useAutoBuildBacklog,
@@ -23,6 +23,7 @@ import {
   useAddToAutoBuildQueue,
   useRemoveFromAutoBuildQueue,
   useIssues,
+  useIsConnected,
 } from '@/src/api/hooks';
 import { ScreenErrorBoundary } from '@/src/components/ScreenErrorBoundary';
 import type { QueueItem, AutoBuildStatus } from '@/src/types';
@@ -37,7 +38,7 @@ import {
 
 function AutoBuildScreenContent() {
   const router = useRouter();
-  const connection = useConnectionStore((s) => s.connection);
+  const isConnected = useIsConnected();
   const selectedProject = useProjectStore((s) => s.selectedProject);
   const buildState = useAutoBuildStore((s) => s.state);
 
@@ -95,7 +96,7 @@ function AutoBuildScreenContent() {
   }, [issues, buildState.queue, persistentBacklogItems]);
 
   // Not connected state
-  if (!connection.device) {
+  if (!isConnected) {
     return (
       <View style={styles.container}>
         <View style={styles.emptyState}>
@@ -138,8 +139,45 @@ function AutoBuildScreenContent() {
     );
   }
 
+  // Check if beads is not installed
+  const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
+  const beadsNotInstalled = isError && (
+    errorMessage.includes('beads') && errorMessage.includes('not') ||
+    errorMessage.includes('not installed') ||
+    errorMessage.includes('beads_not_installed') ||
+    errorMessage.includes('no beads')
+  );
+
+  // Beads not installed state
+  if (beadsNotInstalled) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <View style={styles.projectBadge}>
+            <FontAwesome name="folder-open" size={14} color={colors.accent.purple} />
+            <Text style={styles.projectName}>{selectedProject.name}</Text>
+          </View>
+        </View>
+        <View style={styles.emptyState}>
+          <View style={[styles.iconContainer, { backgroundColor: 'rgba(255, 152, 0, 0.1)' }]}>
+            <FontAwesome name="puzzle-piece" size={48} color={colors.accent.orange} />
+          </View>
+          <Text style={styles.emptyTitle}>Auto-Build Not Available</Text>
+          <Text style={styles.emptyText}>
+            You don't have Beads issue tracking installed for this project. Auto-Build requires Beads to work.
+          </Text>
+          <TouchableOpacity style={styles.button} onPress={() => router.push('/')}>
+            <FontAwesome name="arrow-left" size={16} color={colors.bg.primary} />
+            <Text style={styles.buttonText}>Back to Projects</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   // Error state
   if (isError) {
+    const errorMessage = error instanceof Error ? error.message : 'Unable to connect to desktop';
     return (
       <View style={styles.container}>
         <View style={styles.header}>
@@ -153,13 +191,23 @@ function AutoBuildScreenContent() {
             <FontAwesome name="exclamation-triangle" size={48} color={colors.accent.red} />
           </View>
           <Text style={styles.emptyTitle}>Failed to Load</Text>
-          <Text style={styles.emptyText}>
-            {error instanceof Error ? error.message : 'Unable to connect to desktop'}
-          </Text>
-          <TouchableOpacity style={styles.button} onPress={() => router.push('/modal')}>
-            <FontAwesome name="link" size={16} color={colors.bg.primary} />
-            <Text style={styles.buttonText}>Check Connection</Text>
-          </TouchableOpacity>
+          <Text style={styles.emptyText}>{errorMessage}</Text>
+          <View style={styles.errorActions}>
+            <TouchableOpacity
+              style={[styles.button, { marginRight: 8 }]}
+              onPress={() => refetch()}
+            >
+              <FontAwesome name="refresh" size={16} color={colors.bg.primary} />
+              <Text style={styles.buttonText}>Retry</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.button, styles.buttonSecondary]}
+              onPress={() => router.push('/modal')}
+            >
+              <FontAwesome name="link" size={16} color={colors.text.primary} />
+              <Text style={[styles.buttonText, { color: colors.text.primary }]}>Settings</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     );
@@ -631,6 +679,13 @@ const styles = StyleSheet.create({
     color: colors.bg.primary,
     fontSize: 16,
     fontWeight: '600',
+  },
+  buttonSecondary: {
+    backgroundColor: colors.bg.tertiary,
+  },
+  errorActions: {
+    flexDirection: 'row',
+    marginTop: spacing.md,
   },
 });
 
