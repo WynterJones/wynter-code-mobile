@@ -34,9 +34,9 @@
   "submit": {
     "production": {
       "ios": {
-        "appleId": "${APPLE_ID}",
-        "ascAppId": "${ASC_APP_ID}",
-        "appleTeamId": "${APPLE_TEAM_ID}"
+        "appleId": "extensible.cascade@gmail.com",
+        "ascAppId": "6757318139",
+        "appleTeamId": "7X2UF4FZHC"
       }
     }
   }

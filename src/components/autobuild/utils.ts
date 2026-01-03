@@ -1,7 +1,9 @@
 import type { AutoBuildPhase } from '@/src/types';
 
-export function formatTime(dateStr: string): string {
+export function formatTime(dateStr: string | undefined | null): string {
+  if (!dateStr) return 'Unknown';
   const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return 'Unknown';
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 

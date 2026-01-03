@@ -5,7 +5,7 @@ import type { ApiResponse, ChatSession, ChatMessage } from '../types';
 import { useConnectionStore } from '../stores/connectionStore';
 import { signRequest, generateNonce, getTimestamp } from './crypto';
 import { isSessionExpired, validateNetworkEndpoint } from './validation';
-import { apiFetch } from './base';
+import { apiFetch, apiFetchStreamingViaRelay } from './base';
 
 // Chat Sessions
 export async function fetchSessions(projectId: string): Promise<ChatSession[]> {
@@ -98,9 +98,9 @@ export async function sendMobileChatMessage(
     throw new Error('Not connected to desktop');
   }
 
-  // Chat streaming is not supported over relay mode (requires direct HTTP connection for SSE)
-  if (connection.connectionMode === 'relay') {
-    throw new Error('Mobile chat is not available in relay mode. Please connect via WiFi on the same network as your desktop.');
+  // Use relay streaming for relay mode
+  if (connection.connectionMode === 'relay' && connection.relayConfig) {
+    return sendMobileChatMessageViaRelay(request, onChunk);
   }
 
   if (!connection.device) {
@@ -221,4 +221,37 @@ export async function sendMobileChatMessage(
 
     xhr.send(body);
   });
+}
+
+/**
+ * Send mobile chat message via relay with streaming support (batched SSE)
+ */
+async function sendMobileChatMessageViaRelay(
+  request: MobileChatRequest,
+  onChunk: (chunk: MobileChatChunk) => void
+): Promise<void> {
+  await apiFetchStreamingViaRelay(
+    '/mobile/chat',
+    {
+      method: 'POST',
+      body: JSON.stringify(request),
+    },
+    (data: string) => {
+      // Handle [DONE] marker
+      if (data === '[DONE]') {
+        onChunk({ type: 'done' });
+        return;
+      }
+
+      // Parse and forward chunks
+      try {
+        const chunk: MobileChatChunk = JSON.parse(data);
+        onChunk(chunk);
+      } catch (e) {
+        if (__DEV__) {
+          console.error('[MobileChat] Failed to parse relay chunk:', data, e);
+        }
+      }
+    }
+  );
 }

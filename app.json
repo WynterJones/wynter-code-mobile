@@ -20,10 +20,14 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Camera is used to scan QR codes for pairing with the desktop app",
         "NSLocalNetworkUsageDescription": "Local network access is required to connect to Wynter Code on your desktop",
-        "NSBonjourServices": ["_wynter-code._tcp"],
+        "NSBonjourServices": [
+          "_wynter-code._tcp",
+          "_wynter-code._tcp"
+        ],
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
-        }
+        },
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -33,7 +37,11 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.wyntercode.mobile",
-      "versionCode": 1
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -55,15 +63,16 @@
     },
     "extra": {
       "eas": {
-        "projectId": "wynter-code-mobile"
-      }
+        "projectId": "957b7ada-7c6e-418f-b94f-34fa0c925968"
+      },
+      "router": {}
     },
-    "owner": "wyntercode",
     "runtimeVersion": {
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/wynter-code-mobile"
-    }
+      "url": "https://u.expo.dev/"
+    },
+    "owner": "wynterjones"
   }
 }

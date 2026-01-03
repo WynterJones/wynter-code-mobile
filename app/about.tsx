@@ -30,6 +30,13 @@ const links: LinkItem[] = [
     color: colors.accent.purple,
   },
   {
+    title: 'Wynter Code Relay',
+    subtitle: 'Self-host for remote connections',
+    url: 'https://github.com/WynterJones/wynter-code-relay',
+    icon: 'cloud',
+    color: colors.accent.cyan,
+  },
+  {
     title: 'Farmwork',
     subtitle: 'Get the best out of your workflow',
     url: 'https://farmwork.dev',
@@ -75,13 +82,14 @@ export default function AboutScreen() {
             <Text style={styles.cardTitle}>How It Works</Text>
           </View>
           <Text style={styles.description}>
-            Wynter Code Mobile connects to your Wynter Code desktop application over your local network.
-            Run chat sessions, monitor builds, and access the most important features right from your phone.
+            Wynter Code Mobile connects to your Wynter Code desktop application over your local network,
+            or remotely via Wynter Code Relay. Run chat sessions, monitor builds, and access the most
+            important features right from your phone.
           </Text>
           <View style={styles.requirementBox}>
             <FontAwesome name="desktop" size={16} color={colors.accent.purple} />
             <Text style={styles.requirementText}>
-              Requires Wynter Code desktop app running on your Mac
+              Requires Wynter Code desktop app, with optional Relay for remote access
             </Text>
           </View>
         </View>

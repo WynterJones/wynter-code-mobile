@@ -217,7 +217,14 @@ export function MobileChatView({ session, onBack }: MobileChatViewProps) {
         </View>
         <View style={styles.headerInfo}>
           <Text style={styles.title} numberOfLines={1}>{session.name}</Text>
-          <Text style={styles.subtitle}>Mobile Chat</Text>
+          {session.projectPath && (
+            <View style={styles.projectIndicator}>
+              <FontAwesome name="folder-o" size={10} color={colors.text.muted} />
+              <Text style={styles.subtitle} numberOfLines={1}>
+                {session.projectPath.split('/').pop()}
+              </Text>
+            </View>
+          )}
         </View>
       </View>
 
@@ -373,9 +380,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.text.primary,
   },
+  projectIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
   subtitle: {
     fontSize: 13,
     color: colors.text.muted,
+    maxWidth: 200,
   },
   messageList: {
     flex: 1,

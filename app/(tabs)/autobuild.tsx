@@ -73,11 +73,11 @@ function AutoBuildScreenContent() {
     if (!backlogData?.issues) return [];
     return backlogData.issues.map((item) => ({
       id: item.id,
-      description: item.title,
+      description: item.title || `Issue ${item.id}`,
       status: item.status === 'pending' ? 'pending' as const :
               item.status === 'processing' ? 'processing' as const :
               item.status === 'completed' ? 'completed' as const : 'pending' as const,
-      createdAt: item.created_at,
+      createdAt: item.created_at || new Date().toISOString(),
     }));
   }, [backlogData?.issues]);
 

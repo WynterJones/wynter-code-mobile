@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,7 @@ import { useRouter } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 import { colors, spacing, borderRadius } from '@/src/theme';
-import { useMobileChatStore } from '@/src/stores';
+import { useMobileChatStore, useProjectStore } from '@/src/stores';
 import { useIsConnected } from '@/src/api/hooks';
 import { BlueprintGrid } from '@/src/components/BlueprintGrid';
 import { GlassButton } from '@/src/components/GlassButton';
@@ -27,6 +27,7 @@ import {
 function ChatScreenContent() {
   const router = useRouter();
   const isConnected = useIsConnected();
+  const selectedProject = useProjectStore((s) => s.selectedProject);
   const {
     sessions,
     selectedSessionId,
@@ -43,7 +44,20 @@ function ChatScreenContent() {
     loadSessions();
   }, [loadSessions]);
 
+  // Filter sessions by selected project
+  const projectSessions = useMemo(() => {
+    if (!selectedProject) return [];
+    return sessions.filter((s) => s.projectPath === selectedProject.path);
+  }, [sessions, selectedProject]);
+
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) || null;
+
+  // Clear selected session if it doesn't belong to current project
+  useEffect(() => {
+    if (selectedSession && selectedProject && selectedSession.projectPath !== selectedProject.path) {
+      selectSession(null);
+    }
+  }, [selectedProject, selectedSession, selectSession]);
 
   const onRefresh = useCallback(async () => {
     await loadSessions();
@@ -110,7 +124,17 @@ function ChatScreenContent() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Mobile Chats</Text>
+        <View style={styles.headerTitleContainer}>
+          <Text style={styles.headerTitle}>Chats</Text>
+          {selectedProject && (
+            <View style={styles.projectBadge}>
+              <FontAwesome name="folder-o" size={10} color={colors.accent.purple} />
+              <Text style={styles.projectBadgeText} numberOfLines={1}>
+                {selectedProject.name}
+              </Text>
+            </View>
+          )}
+        </View>
         <TouchableOpacity
           style={styles.newChatButton}
           onPress={() => setShowNewChatModal(true)}
@@ -127,15 +151,17 @@ function ChatScreenContent() {
           <RefreshControl refreshing={isLoading} onRefresh={onRefresh} tintColor={colors.accent.purple} />
         }
       >
-        {isLoading && sessions.length === 0 ? (
+        {isLoading && projectSessions.length === 0 ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={colors.accent.purple} />
           </View>
-        ) : sessions.length === 0 ? (
+        ) : projectSessions.length === 0 ? (
           <View style={styles.emptyList}>
             <FontAwesome name="comments-o" size={32} color={colors.text.muted} />
-            <Text style={styles.emptyListText}>No chats yet</Text>
-            <Text style={styles.emptyListSubtext}>Create a new chat to get started</Text>
+            <Text style={styles.emptyListText}>No chats for this project</Text>
+            <Text style={styles.emptyListSubtext}>
+              Chats are saved per project. Create a new chat to get started.
+            </Text>
             <TouchableOpacity
               style={styles.emptyNewChat}
               onPress={() => setShowNewChatModal(true)}
@@ -145,7 +171,7 @@ function ChatScreenContent() {
             </TouchableOpacity>
           </View>
         ) : (
-          sessions.map((session) => (
+          projectSessions.map((session) => (
             <SessionCard
               key={session.id}
               session={session}
@@ -178,10 +204,25 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  headerTitleContainer: {
+    flex: 1,
+    gap: spacing.xs,
+  },
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: colors.text.primary,
+  },
+  projectBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  projectBadgeText: {
+    fontSize: 12,
+    color: colors.accent.purple,
+    fontWeight: '500',
+    maxWidth: 150,
   },
   newChatButton: {
     flexDirection: 'row',

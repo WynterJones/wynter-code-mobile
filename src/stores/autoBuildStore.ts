@@ -122,27 +122,27 @@ export const useAutoBuildStore = create<AutoBuildStore>((set, get) => {
       // Map queue items
       const queue: QueueItem[] = (status.queue || []).map((q) => ({
         id: q.id,
-        description: q.title,
+        description: q.title || `Issue ${q.id}`,
         status: q.status === 'pending' ? 'pending' :
                 q.status === 'processing' ? 'processing' :
                 q.status === 'completed' ? 'completed' : 'failed',
-        createdAt: q.created_at,
+        createdAt: q.created_at || new Date().toISOString(),
       }));
 
       // Map human review items
-      const humanReview: QueueItem[] = (status.human_review || []).map((q: { id: string; title: string; created_at: string }) => ({
+      const humanReview: QueueItem[] = (status.human_review || []).map((q: { id: string; title?: string; created_at?: string }) => ({
         id: q.id,
-        description: q.title,
+        description: q.title || `Issue ${q.id}`,
         status: 'pending' as const,
-        createdAt: q.created_at,
+        createdAt: q.created_at || new Date().toISOString(),
       }));
 
       // Map completed items
-      const completed: QueueItem[] = (status.completed || []).map((q: { id: string; title: string; created_at: string }) => ({
+      const completed: QueueItem[] = (status.completed || []).map((q: { id: string; title?: string; created_at?: string }) => ({
         id: q.id,
-        description: q.title,
+        description: q.title || `Issue ${q.id}`,
         status: 'completed' as const,
-        createdAt: q.created_at,
+        createdAt: q.created_at || new Date().toISOString(),
       }));
 
       // Map logs

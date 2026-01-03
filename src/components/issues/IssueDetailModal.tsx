@@ -56,7 +56,12 @@ export function IssueDetailModal({
   };
 
   return (
-    <Modal visible animationType="slide" presentationStyle="pageSheet">
+    <Modal
+      visible
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
       <View style={styles.modalContainer}>
         {/* Header */}
         <View style={styles.modalHeader}>

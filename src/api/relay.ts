@@ -12,7 +12,7 @@ import {
   EncryptedEnvelope,
 } from './relayCrypto';
 import type { StateUpdate } from './websocket';
-import { handleRelayHttpResponse } from './base';
+import { handleRelayHttpResponse, handleRelayStreamChunk } from './base';
 
 // Relay protocol message types
 interface RelayHandshake {
@@ -72,6 +72,15 @@ interface HttpResponseMessage {
   error?: string;
 }
 
+// HTTP stream chunk for SSE responses via relay (batched delivery)
+interface HttpStreamChunkMessage {
+  type: 'http_stream_chunk';
+  request_id: string;
+  sequence: number;
+  chunks: string[];
+  is_final: boolean;
+}
+
 // Type guard for HTTP responses
 function isHttpResponse(msg: unknown): msg is HttpResponseMessage {
   return (
@@ -79,6 +88,16 @@ function isHttpResponse(msg: unknown): msg is HttpResponseMessage {
     msg !== null &&
     'type' in msg &&
     (msg as { type: string }).type === 'http_response'
+  );
+}
+
+// Type guard for HTTP stream chunks
+function isHttpStreamChunk(msg: unknown): msg is HttpStreamChunkMessage {
+  return (
+    typeof msg === 'object' &&
+    msg !== null &&
+    'type' in msg &&
+    (msg as { type: string }).type === 'http_stream_chunk'
   );
 }
 
@@ -266,10 +285,16 @@ class RelayWebSocketManager {
 
     try {
       // Decrypt the message
-      const decrypted = decryptMessage<StateUpdate | HttpResponseMessage>(
+      const decrypted = decryptMessage<StateUpdate | HttpResponseMessage | HttpStreamChunkMessage>(
         message.envelope,
         this.encryptionKey
       );
+
+      // Check if this is an HTTP stream chunk (batched SSE)
+      if (isHttpStreamChunk(decrypted)) {
+        handleRelayStreamChunk(decrypted);
+        return;
+      }
 
       // Check if this is an HTTP response
       if (isHttpResponse(decrypted)) {

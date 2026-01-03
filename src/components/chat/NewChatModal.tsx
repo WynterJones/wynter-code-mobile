@@ -60,7 +60,17 @@ export function NewChatModal({ visible, onClose }: NewChatModalProps) {
       <View style={styles.overlay}>
         <View style={styles.content}>
           <View style={styles.header}>
-            <Text style={styles.title}>New Chat</Text>
+            <View>
+              <Text style={styles.title}>New Chat</Text>
+              {selectedProject && (
+                <View style={styles.projectContext}>
+                  <FontAwesome name="folder-o" size={10} color={colors.accent.purple} />
+                  <Text style={styles.projectContextText} numberOfLines={1}>
+                    {selectedProject.name}
+                  </Text>
+                </View>
+              )}
+            </View>
             <TouchableOpacity onPress={onClose} style={styles.close}>
               <FontAwesome name="times" size={18} color={colors.text.secondary} />
             </TouchableOpacity>
@@ -168,6 +178,18 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: colors.text.primary,
+  },
+  projectContext: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: 2,
+  },
+  projectContextText: {
+    fontSize: 12,
+    color: colors.accent.purple,
+    fontWeight: '500',
+    maxWidth: 200,
   },
   close: {
     padding: spacing.sm,

@@ -239,7 +239,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   menu: {
-    width: 280,
+    width: '90%',
     height: '100%',
     backgroundColor: colors.bg.secondary,
     paddingTop: 60,
